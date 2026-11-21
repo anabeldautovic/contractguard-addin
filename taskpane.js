@@ -300,7 +300,7 @@
         n = cs.items.filter((c) => CG.isOurs(c.content)).length;
       });
       if (!n) { status("No ContractGuard comments in this document."); return; }
-      ask(`Remove all ${n} ContractGuard comment${n === 1 ? "" : "s"} from this document? Your decision replies in them are removed too. The Log stays.`, "Remove", () => guarded(clearComments));
+      ask(`Remove all ${n} ContractGuard comment${n === 1 ? "" : "s"} from this document? Only ContractGuard’s comments are removed, with the decision replies inside them. Your own comments and everyone else’s stay. The Log stays too.`, "Remove", () => guarded(clearComments));
     });
   }
 
