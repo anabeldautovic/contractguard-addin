@@ -207,29 +207,44 @@
   const TAG = "ContractGuard ·";
   const isOurs = (text) => /^(ContractGuard ·|\[ContractGuard\])/.test(text || "");
   const suggestion = (f) => LABEL[f.a];
-  // The comment as pieces with formatting: [{t: text, b: bold, i: italic}]. A line break starts a new line.
-  // Word gets the formatting; commentText() gives the same comment as plain text.
-  function commentParts(f) {
-    const P = [];
-    const add = (t, o = {}) => P.push({ t, b: !!o.b, i: !!o.i });
-    const head = f.cosmetic ? "Accepted: wording only" : f.a === "review" ? "No rule: you decide" : "Suggest: " + suggestion(f);
-    const NL = "\n";
-    add(`${TAG} ${head}`, { b: true });
-    add(NL + f.why);
-    const q = (t) => `“${t}”`;
+  // A short quote around the changed words, with a few words of context: "…the Agreement sixty (60) days from receipt…".
+  function snippet(a, b) {
+    const ops = diffWords(a, b), C = 5;
+    let first = -1, last = -1;
+    ops.forEach((o, k) => { if (o.t !== "=") { if (first < 0) first = k; last = k; } });
+    if (first < 0) return { omv: a, sup: b };
+    const from = Math.max(0, first - C), to = Math.min(ops.length, last + C + 1);
+    const side = (t) => (from > 0 ? "…" : "") + ops.slice(from, to).filter((o) => o.t === "=" || o.t === t).map((o) => o.w).join(" ") + (to < ops.length ? "…" : "");
+    return { omv: side("-"), sup: side("+") };
+  }
+  const cut = (t, n = 320) => (t.length > n ? t.slice(0, n).replace(/\s+\S*$/, "") + "…" : t);
+  const ICON = { accept: "✔", reject: "✖", escalate: "⚑", review: "?" };
+
+  // The comment text. Word comments from add-ins can't be reliably formatted,
+  // so the layout uses symbols, short quotes and blank lines instead of bold or italic.
+  function commentText(f) {
+    const q = (t) => `“${cut(t)}”`;
+    const head = f.cosmetic ? "✔ Accepted (wording only)" : f.a === "review" ? "? No rule: you decide" : `${ICON[f.a]} Suggest: ${suggestion(f)}`;
+    const L = [`${TAG} ${head}`, "", f.why];
     if (!f.cosmetic) {
       let omv, sup;
-      if (f.b && f.c) { const d = changedSentences(f.b.paras, f.c.paras); omv = d.omv ? q(d.omv) : "(not in OMV's text: the supplier added this)"; sup = d.supplier ? q(d.supplier) : "(deleted by the supplier)"; }
-      else if (!f.c) { omv = q(f.b.body); sup = "(whole clause deleted)"; }
+      if (f.b && f.c) {
+        const d = sentenceDiff(f.b.paras, f.c.paras);
+        if (d.omv.length && d.omv.length === d.supplier.length) {
+          const s = d.omv.map((x, k) => snippet(x, d.supplier[k]));
+          omv = s.map((x) => q(x.omv)).join(" / "); sup = s.map((x) => q(x.sup)).join(" / ");
+        } else {
+          omv = d.omv.length ? d.omv.map(q).join(" ") : "(nothing: the supplier added this)";
+          sup = d.supplier.length ? d.supplier.map(q).join(" ") : "(deleted by the supplier)";
+        }
+      } else if (!f.c) { omv = q(f.b.body); sup = "(whole clause deleted)"; }
       else { omv = "(no such clause)"; sup = q(f.c.body); }
-      add(NL + NL + "OMV: ", { b: true }); add(omv, { i: true });
-      add(NL + "Supplier: ", { b: true }); add(sup, { i: true });
+      L.push("", `OMV ▸ ${omv}`, `Supplier ▸ ${sup}`);
     }
-    if (f.b && f.c && f.b.num !== f.c.num) add(`${NL}${NL}Note: OMV clause ${f.b.num} is clause ${f.c.num} here.`);
-    if (f.rule && !f.cosmetic && f.a !== "review") add(`${NL}${NL}Rule ${f.rule.id} · ${f.rule.source}`, { i: true });
-    return P;
+    if (f.b && f.c && f.b.num !== f.c.num) L.push("", `Note: OMV clause ${f.b.num} is clause ${f.c.num} here.`);
+    if (f.rule && !f.cosmetic && f.a !== "review") L.push("", `Rule ${f.rule.id} · ${f.rule.source}`);
+    return L.join("\n");
   }
-  const commentText = (f) => commentParts(f).map((p) => p.t).join("");
 
-  root.ContractGuard = { RULEBOOK_VERSION, TEMPLATE_NAME, OMV_STANDARD, diffSeq, RULES, LABEL, TAG, isOurs, suggestion, splitClauses, review, commentText, commentParts, diffWords };
+  root.ContractGuard = { RULEBOOK_VERSION, TEMPLATE_NAME, OMV_STANDARD, diffSeq, RULES, LABEL, TAG, isOurs, suggestion, splitClauses, review, commentText, diffWords };
 })(typeof window !== "undefined" ? window : globalThis);

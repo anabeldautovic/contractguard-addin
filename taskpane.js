@@ -120,28 +120,13 @@
         const next = f.c ? null : CG.OMV_STANDARD.slice(CG.OMV_STANDARD.indexOf(f.b) + 1).map((x) => locate(cp, x)).find(Boolean);
         const range = f.c ? clauseRange(paras, f.c) : next ? paras.items[next.headIdx].getRange("Whole") : paras.items[0].getRange("Whole");
         if (f.c) searches.push(...findAdded(paras, f.c, f));
-        const parts = CG.commentParts(f);
-        const cm = range.insertComment(parts[0].t);
+        const cm = range.insertComment(CG.commentText(f));
         if (f.cosmetic) cm.resolved = true; // wording-only changes are accepted automatically
         cm.load("id");
-        comments.push({ cm, parts });
+        comments.push(cm);
       }
       await ctx.sync();
-      R.findings.forEach((f, i) => (f.commentId = comments[i].cm.id));
-
-      // Fill in the rest of each comment with bold and italic parts.
-      try {
-        for (const { cm, parts } of comments) {
-          cm.contentRange.bold = parts[0].b; cm.contentRange.italic = parts[0].i;
-          for (const p of parts.slice(1)) { const r = cm.contentRange.insertText(p.t, "End"); r.bold = p.b; r.italic = p.i; }
-        }
-        await ctx.sync();
-      } catch (e) {
-        // This Word can't format comments: use plain text instead.
-        console.warn("Comment formatting not supported, using plain text.", e);
-        comments.forEach(({ cm, parts }) => (cm.content = parts.map((p) => p.t).join("")));
-        await ctx.sync();
-      }
+      R.findings.forEach((f, i) => (f.commentId = comments[i].id));
       searches.forEach((res) => { if (res.items.length) res.items[0].font.highlightColor = "Yellow"; });
       await ctx.sync();
 
@@ -321,7 +306,7 @@
       const d = decisions[i];
       const rec = f.a === "review" ? null : f.a;
       const tag = f.cosmetic ? "Wording only" : f.a === "review" ? "No rule: you decide" : "Suggest: " + CG.suggestion(f);
-      h += `<div class="item l-${PILL[f.a]}${d ? " decided" : ""}">`;
+      h += `<div class="item l-${PILL[f.a]}${d ? " decided" : ""}" data-i="${i}" title="Click to show in the document">`;
       h += `<div class="top" data-i="${i}" title="Show in document"><div class="h">${esc((f.c || f.b).num)}. ${esc(f.head)}</div><span class="tag ${PILL[f.a]}">${esc(tag)}</span></div>`;
       h += `<div class="w">${esc(f.why)}</div>`;
       if (!f.cosmetic) h += `<details><summary>Show the change</summary><div class="diff">${diffHtml(f)}</div><div class="legend"><del>OMV wording removed</del> <ins>supplier's wording</ins></div></details>`;
@@ -333,8 +318,14 @@
       h += `</div>`;
     });
     $("result").innerHTML = h;
-    $("result").querySelectorAll(".top").forEach((el) => {
-      el.onclick = () => { const f = R.findings[+el.dataset.i]; if (f.c) guarded(() => jumpTo(f.c)); };
+    // Click anywhere on a change (except its buttons) to jump to it in the document.
+    $("result").querySelectorAll(".item").forEach((el) => {
+      el.onclick = (e) => {
+        if (e.target.closest("button, summary, a")) return;
+        $("result").querySelectorAll(".item.active").forEach((x) => x.classList.remove("active"));
+        el.classList.add("active");
+        guarded(() => jumpTo(R.findings[+el.dataset.i]));
+      };
     });
     $("result").querySelectorAll(".undo").forEach((el) => {
       el.onclick = () => guarded(() => undo(+el.dataset.i));
@@ -344,12 +335,30 @@
     });
   }
 
-  async function jumpTo(ref) {
+  // Scroll the document to a change and select the changed words (or the changed paragraph).
+  async function jumpTo(f) {
     await Word.run(async (ctx) => {
       const { paras, cp } = await readClauses(ctx);
-      const c = locate(cp, ref);
-      if (c) paras.items[c.headIdx].select();
+      const c = f.c ? locate(cp, f.c) : null;
+      if (!c) {
+        // Deleted clause: go to where it used to be (the next OMV clause still in the document).
+        const pos = CG.OMV_STANDARD.indexOf(f.b);
+        const next = CG.OMV_STANDARD.slice(pos + 1).map((x) => locate(cp, x)).find(Boolean);
+        (next ? paras.items[next.headIdx] : paras.items[0]).select();
+        await ctx.sync();
+        return;
+      }
+      const res = findAdded(paras, c, f);
+      await ctx.sync();
+      const hit = res.find((r) => r.items.length);
+      if (hit) hit.items[0].select();
+      else {
+        const omv = new Set(f.b ? f.b.paras : []);
+        const k = c.paras.findIndex((t) => !omv.has(t));
+        (k >= 0 ? paras.items[c.bodyIdx[k]] : paras.items[c.headIdx]).select();
+      }
       await ctx.sync();
     });
   }
+
 })();
