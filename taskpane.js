@@ -25,6 +25,9 @@
   let currentRule = null; // rule id highlighted in the Rulebook tab
   let lastCp = null;     // clauses from the last read, to know where the cursor is
   let busy = false;
+  let uploaded = null;   // {name, base}: an earlier round the lawyer uploaded to compare with
+  let used = null;       // what the last review compared with: {name, short, base, kind: "template" | "upload", m}
+  const baseWord = () => (used && used.kind === "upload" ? "the previous round's" : "OMV's standard");
 
   function status(msg, isErr) { const s = $("status"); s.textContent = msg; s.className = isErr ? "err" : ""; }
 
@@ -37,6 +40,7 @@
     $("run").onclick = onRun;
     $("clear").onclick = onClear;
     document.querySelectorAll(".tab").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
+    buildCompare();
     loadLog();
     renderRules();
     renderLog();
@@ -57,6 +61,66 @@
       busy = false;
       btns().forEach((b) => (b.disabled = false));
     }
+  }
+
+  // ---------------- what to compare with ----------------
+  // Built here (not in the page) so it also appears when the browser still has an older copy of the page.
+  function buildCompare() {
+    if ($("compare")) return;
+    const box = document.createElement("div");
+    box.id = "compare"; box.className = "compare";
+    box.innerHTML = `<label for="tpl">Compare with</label><select id="tpl"></select>
+      <a href="#" id="upl">Upload previous round…</a><input type="file" id="file" accept=".docx" hidden>`;
+    $("run").before(box);
+    fillCompare("auto");
+    $("upl").onclick = (e) => { e.preventDefault(); $("file").click(); };
+    $("file").onchange = () => { const f = $("file").files[0]; if (f) guarded(() => loadUpload(f)); $("file").value = ""; };
+  }
+  function fillCompare(sel) {
+    const o = [`<option value="auto">Detect automatically (recommended)</option>`]
+      .concat(CG.TEMPLATES.map((t) => `<option value="${t.id}">${esc(t.short)}</option>`))
+      .concat(uploaded ? [`<option value="upload">Previous round: ${esc(uploaded.name)}</option>`] : []);
+    $("tpl").innerHTML = o.join("");
+    $("tpl").value = sel;
+  }
+
+  // Read an uploaded .docx inside the panel (it never leaves the computer).
+  function loadJSZip() {
+    if (window.JSZip) return Promise.resolve();
+    return new Promise((ok, fail) => {
+      const s = document.createElement("script");
+      s.src = "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
+      s.onload = ok; s.onerror = () => fail(new Error("Couldn't load the file reader."));
+      document.head.appendChild(s);
+    });
+  }
+  async function loadUpload(file) {
+    status(`Reading ${file.name}…`);
+    if (!/\.docx$/i.test(file.name)) { status("Please choose a Word file (.docx).", true); return; }
+    await loadJSZip();
+    const zip = await window.JSZip.loadAsync(await file.arrayBuffer());
+    const xml = new DOMParser().parseFromString(await zip.file("word/document.xml").async("string"), "application/xml");
+    const W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    const list = [...xml.getElementsByTagNameNS(W, "p")].map((p) => {
+      const st = p.getElementsByTagNameNS(W, "pStyle")[0];
+      const style = st ? st.getAttributeNS(W, "val") || st.getAttribute("w:val") || "" : "";
+      const text = [...p.getElementsByTagNameNS(W, "t")].map((t) => t.textContent).join("");
+      return { text, isHeading: /^heading/i.test(style), isTitle: /^title$/i.test(style) };
+    });
+    const cp = CG.splitClauses(list);
+    if (cp.length < 2) { status(`Couldn't find numbered clauses in ${file.name}.`, true); return; }
+    uploaded = { name: file.name, base: CG.makeBase(cp) };
+    fillCompare("upload");
+    status(`Loaded ${file.name} (${cp.length} clauses). Press Run review to compare with it.`);
+  }
+
+  // Pick what to compare with: the lawyer's choice, or the closest approved template.
+  function chooseBaseline(cp) {
+    const sel = $("tpl") ? $("tpl").value : "auto";
+    if (sel === "upload" && uploaded) return { name: `Previous round: ${uploaded.name}`, short: "the previous round", base: uploaded.base, kind: "upload", m: CG.templateMatch(uploaded.base, cp) };
+    if (sel !== "auto") { const t = CG.TEMPLATES.find((x) => x.id === sel); return { ...t, kind: "template", m: CG.templateMatch(t.base, cp) }; }
+    const best = CG.detectTemplate(cp)[0];
+    return { ...best.t, kind: "template", auto: true, m: best.m };
   }
 
   // ---------------- tabs ----------------
@@ -106,6 +170,7 @@
       const used = review ? review.findings.map((f, i) => ({ f, i })).filter((x) => x.f.rule === r) : [];
       h += `<div class="rule${r.id === currentRule ? " cur" : ""}" data-id="${r.id}"><div class="rid">${esc(r.id)} <span>· ${esc(r.source.replace("OMV GPC Jan 2026, ", ""))}</span></div>`;
       h += `<div class="rstd"><b>OMV position:</b> ${esc(r.standard)}</div><ul>` + CG.OUTCOMES[r.id].map((o) => `<li>${esc(o)}</li>`).join("") + `</ul>`;
+      h += `<a href="${ruleChangeMail(r)}" class="sugg" data-id="${r.id}" target="_blank" rel="noopener">✎ Suggest a change to this rule</a>`;
       if (used.length) h += `<div class="used">In this contract: ` + used.map((x) => `<a href="#" class="tochange" data-i="${x.i}">${esc((x.f.c || x.f.b).num)}. ${esc(x.f.head)} → ${esc(CG.suggestion(x.f))}</a>`).join(", ") + `</div>`;
       h += `</div>`;
     }
@@ -113,6 +178,7 @@
     const body = `Proposal for a new ContractGuard rule\n\nClause:\nWhen the supplier changes:\nContractGuard should suggest (Accept / Reject / Escalate to whom):\nBecause:\n\nProposed by:`;
     h += `<a class="mini" href="${mailto(CG.RULEBOOK_OWNER.email, "ContractGuard: new rule proposal", body)}" target="_blank" rel="noopener">✎ Propose a new rule</a>`;
     $("rules").innerHTML = h;
+    $("rules").querySelectorAll(".sugg").forEach((a) => (a.onclick = () => addEvent("Rule change suggested", a.dataset.id)));
     $("rules").querySelectorAll(".tochange").forEach((a) => (a.onclick = (e) => { e.preventDefault(); showTab("changes"); focusCard(+a.dataset.i, true); }));
   }
 
@@ -134,6 +200,50 @@
     const body = `Proposal for the ContractGuard rulebook\n\nClause: ${(f.c || f.b).num}. ${f.head}\nWhen the supplier: ${when}\nContractGuard should suggest: ${should}\nBecause: ${because}\n\n` +
       `Current rule: ${f.rule ? f.rule.id : "none (ContractGuard said: you decide)"}\nContractGuard suggested: ${f.a === "review" ? "nothing" : CG.LABEL[f.a]}. The lawyer decided: ${ACT_LABEL[d.k]}.\nContract: ${docName()}\n`;
     return mailto(CG.RULEBOOK_OWNER.email, subject, body);
+  }
+
+  function ruleChangeMail(r) {
+    const body = `Suggested change to a ContractGuard rule\n\nRule: ${r.id} (${r.source})\nOMV position today: ${r.standard}\nWhat it does today:\n` +
+      CG.OUTCOMES[r.id].map((o) => `- ${o}`).join("\n") + `\n\nWhat should change:\n\nWhy:\n\nExample contract: ${docName()}\n`;
+    return mailto(CG.RULEBOOK_OWNER.email, `ContractGuard: suggested change to rule ${r.id}`, body);
+  }
+
+  // A plain-text summary of the whole review, for an e-mail or to paste anywhere.
+  function summaryText() {
+    const R = review, lines = [];
+    const n = R.findings.length, nd = decisions.filter(Boolean).length;
+    lines.push(`ContractGuard review: ${docName()}`, `Compared with: ${used.name}`, `Date: ${new Date().toLocaleDateString()}`, "");
+    lines.push(`${n} change${n === 1 ? "" : "s"} found, ${nd} decided, ${n - nd} still open. ${R.same.length} of ${R.total} clauses are word-for-word identical.`, "");
+    const label = (f) => `${(f.c || f.b).num}. ${f.head}`;
+    const done = R.findings.map((f, i) => ({ f, d: decisions[i] })).filter((x) => x.d);
+    const open = R.findings.filter((f, i) => !decisions[i]);
+    if (done.length) {
+      lines.push("DECIDED");
+      for (const { f, d } of done) {
+        const what = d.k === "escalate" ? `Escalated${d.to ? " to " + d.to : ""}` : d.k === "reject" ? `Rejected (${f.b ? "standard wording put back" : "new clause removed"})` : d.auto ? "Accepted automatically (wording only)" : "Accepted";
+        const sug = f.a === "review" ? "no rule" : `suggested: ${CG.LABEL[f.a]}`;
+        lines.push(`- ${label(f)}: ${what} (${sug})${d.note ? `. Reason: ${d.note}` : ""}`);
+        if (!d.auto) lines.push(`  ${f.why}`);
+      }
+      lines.push("");
+    }
+    if (open.length) {
+      lines.push("STILL OPEN");
+      for (const f of open) lines.push(`- ${label(f)}: ${f.a === "review" ? "no rule, lawyer decides" : "suggested: " + CG.LABEL[f.a]}`, `  ${f.why}`);
+      lines.push("");
+    }
+    lines.push(`Rulebook ${CG.RULEBOOK_VERSION}. Prepared with ContractGuard; every decision was made by the reviewing lawyer.`);
+    return lines.join("\n");
+  }
+  function copyText(t) {
+    const done = () => status("Summary copied. Paste it wherever you need it.");
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(done, () => fallback());
+    else fallback();
+    function fallback() {
+      const ta = document.createElement("textarea"); ta.value = t; document.body.appendChild(ta); ta.select();
+      try { document.execCommand("copy"); done(); } catch (e) { status("Couldn't copy. Use Email summary instead.", true); }
+      ta.remove();
+    }
   }
 
   // ---------------- reading the document ----------------
@@ -238,7 +348,7 @@
   function anchorRange(paras, cp, f, c, res) {
     if (!f.b && c) return clauseRange(paras, c);
     if (!c) {
-      const next = CG.OMV_STANDARD.slice(CG.OMV_STANDARD.indexOf(f.b) + 1).map((x) => locate(cp, x)).find(Boolean);
+      const next = used.base.slice(used.base.indexOf(f.b) + 1).map((x) => locate(cp, x)).find(Boolean);
       return (next ? paras.items[next.headIdx] : paras.items[0]).getRange("Whole");
     }
     const hits = res.filter((r) => r.items.length).map((r) => r.items[0]);
@@ -277,21 +387,23 @@
         status("I couldn't find numbered clauses (like \"3. Prices and Payment\") in this document, so I can't review it. Please review it by hand.", true);
         return;
       }
-      // Stop if this isn't based on OMV's template (e.g. the supplier sent its own terms).
-      const m = CG.templateMatch(CG.OMV_STANDARD, cp);
+      // What to compare with, and stop if the document isn't based on it (e.g. the supplier sent its own terms).
+      const b = chooseBaseline(cp), m = b.m;
       if (!m.ok) {
-        const found = Math.round(m.share * CG.OMV_STANDARD.length);
-        status("Stopped: this doesn't look like OMV's template.", true);
-        $("result").innerHTML = `<div class="summary stop"><b>This doesn't look like it's based on OMV's General Conditions of Purchase.</b>
-          Only ${found} of ${CG.OMV_STANDARD.length} OMV clauses were found, and their wording is ${Math.round(m.avg * 100)}% similar.
+        const found = Math.round(m.share * b.base.length);
+        status("Stopped: this doesn't look like it's based on " + (b.kind === "upload" ? "the uploaded file." : "an OMV template."), true);
+        $("result").innerHTML = `<div class="summary stop"><b>This doesn't look like it's based on ${b.kind === "upload" ? "the uploaded previous round" : b.auto ? "any of OMV's templates" : esc(b.name)}.</b>
+          ${b.auto ? "Closest is " + esc(b.short) + ": only" : "Only"} ${found} of ${b.base.length} clauses were found, and their wording is ${Math.round(m.avg * 100)}% similar.
           The supplier may have sent its own terms, or a different template. ContractGuard stops here instead of flagging every line: please review this contract by hand.</div>`;
         review = null; decisions = []; renderRules(); showTab("changes");
-        addEvent("Review stopped", `Not OMV's template: ${found}/${CG.OMV_STANDARD.length} clauses found, ${Math.round(m.avg * 100)}% similar`);
+        addEvent("Review stopped", `Not based on ${b.short}: ${found}/${b.base.length} clauses found, ${Math.round(m.avg * 100)}% similar`);
         return;
       }
+      used = b;
 
-      status("Comparing with the OMV standard…");
-      const R = CG.review(CG.OMV_STANDARD, cp);
+      status(`Comparing with ${b.short}…`);
+      const R = CG.review(b.base, cp);
+      R.findings.forEach((f) => (f.label = b.kind === "upload" ? "Previous round" : "OMV"));
 
       // First find the supplier's added words, then put each comment on just the changed text.
       const found = R.findings.map((f) => (f.c ? findAdded(paras, f.c, f) : []));
@@ -308,11 +420,11 @@
 
       review = R; pending = null; proposing = null;
       decisions = R.findings.map((f) => f.cosmetic ? { k: "accept", auto: true, text: "Accepted automatically." } : null);
-      addEvent("Review run", `${R.findings.length} change${R.findings.length === 1 ? "" : "s"}, ${R.same.length} of ${R.total} clauses identical`);
+      addEvent("Review run", `Compared with ${b.name}${b.auto ? ` (detected, ${Math.round(m.share * m.avg * 100)}% match)` : ""}: ${R.findings.length} change${R.findings.length === 1 ? "" : "s"}, ${R.same.length} of ${R.total} clauses identical`);
       R.findings.forEach((f) => { if (f.cosmetic) addLog(f, "Accept", "Automatic: wording only"); });
       showResult(); renderRules(); showTab("changes");
       const open = decisions.filter((d) => !d).length;
-      status(R.findings.length ? `Done. ${open} change${open === 1 ? "" : "s"} for you to decide.` : "Done. No changes from the OMV standard.");
+      status(R.findings.length ? `Done. ${open} change${open === 1 ? "" : "s"} for you to decide.` : `Done. No changes from ${b.short}.`);
     });
   }
 
@@ -359,7 +471,7 @@
         await ctx.sync();
         const before = ctx.document.changeTrackingMode;
         ctx.document.changeTrackingMode = Word.ChangeTrackingMode.trackAll;
-        if (cm) { reply = cm.reply(`✖ Rejected. OMV standard wording put back (tracked change).${over}${why}`); cm.resolved = true; }
+        if (cm) { reply = cm.reply(`✖ Rejected. ${baseWord()} wording put back (tracked change).${over}${why}`); cm.resolved = true; }
         if (f.b && c) {
           // Changed clause: put back only the paragraphs that differ from OMV's text.
           rewriteBody(paras, c, f.b.paras);
@@ -368,14 +480,14 @@
           clauseRange(paras, c).delete();
         } else if (f.b && !c) {
           // Clause the supplier deleted: put it back before the next OMV clause that is still there.
-          const pos = CG.OMV_STANDARD.indexOf(f.b);
-          const next = CG.OMV_STANDARD.slice(pos + 1).map((s) => locate(cp, s)).find(Boolean);
+          const pos = used.base.indexOf(f.b);
+          const next = used.base.slice(pos + 1).map((s) => locate(cp, s)).find(Boolean);
           const put = (t) => next ? paras.items[next.headIdx].insertParagraph(t, "Before") : ctx.document.body.insertParagraph(t, "End");
           put(`${f.b.num} ${f.b.head}`).styleBuiltIn = Word.Style.heading1;
           f.b.paras.forEach((t) => { const p = put(t); p.styleBuiltIn = Word.Style.normal; if (isSubhead(t)) p.font.bold = true; });
         }
         ctx.document.changeTrackingMode = before;
-        text = (f.b ? "Rejected. OMV standard wording put back." : "Rejected. Supplier's new clause removed.") + " Shown as a tracked change.";
+        text = (f.b ? `Rejected. ${baseWord()} wording put back.` : "Rejected. Supplier's new clause removed.") + " Shown as a tracked change.";
       }
 
       else if (k === "escalate") {
@@ -548,14 +660,17 @@
     R.findings.forEach((f) => cnt[f.a]++);
     const moved = R.same.filter((s) => s.b.num !== s.c.num).map((s) => `${s.b.head} moved from ${s.b.num} to ${s.c.num}`);
 
-    let h = `<div class="summary"><b>${n ? `${n} change${n > 1 ? "s" : ""} from the OMV standard` : "No changes from the OMV standard"}</b>`;
+    const what = used.kind === "upload" ? "the previous round" : "the OMV template";
+    let h = `<div class="summary"><b>${n ? `${n} change${n > 1 ? "s" : ""} from ${what}` : `No changes from ${what}`}</b>`;
+    h += `<div class="cmp">Compared with: ${esc(used.name)}${used.auto ? ` <span class="muted">(detected, ${Math.round(used.m.share * used.m.avg * 100)}% match)</span>` : ""}</div>`;
     if (n) {
       h += `<div class="pills">`;
       [["escalate", "to escalate"], ["reject", "to reject"], ["review", "you decide"], ["accept", "to accept"]].forEach(([k, t]) => { if (cnt[k]) h += `<span class="pill ${PILL[k]}">${cnt[k]} ${t}</span>`; });
       h += `</div>`;
     }
-    h += `<div class="proof">✓ ${R.same.length} of ${R.total} OMV clauses are word-for-word identical.${moved.length ? " Same wording, new number: " + esc(moved.join("; ")) + "." : ""}</div>`;
+    h += `<div class="proof">✓ ${R.same.length} of ${R.total} clauses are word-for-word identical.${moved.length ? " Same wording, new number: " + esc(moved.join("; ")) + "." : ""}</div>`;
     if (n) h += `<div class="progress">${nd} of ${n} decided</div><div class="bar"><i style="width:${Math.round((100 * nd) / n)}%"></i></div>`;
+    if (n) h += `<div class="sumacts"><a class="mini" href="${mailto("", `ContractGuard review: ${docName()}`, summaryText())}" target="_blank" rel="noopener">✉ Email summary</a><button class="undo copysum">Copy summary</button></div>`;
     h += `</div>`;
 
     R.findings.forEach((f, i) => {
@@ -566,14 +681,14 @@
       h += `<div class="top"><div class="h">${esc((f.c || f.b).num)}. ${esc(f.head)}</div><span class="tag ${PILL[f.a]}">${esc(tag)}</span></div>`;
       h += `<div class="w">${esc(f.why)}</div>`;
       h += `<div class="links">`;
-      if (!f.cosmetic) h += `<details><summary>Show the change</summary><div class="diff">${diffHtml(f)}</div><div class="legend"><del>OMV wording removed</del> <ins>supplier's wording</ins></div></details>`;
+      if (!f.cosmetic) h += `<details><summary>Show the change</summary><div class="diff">${diffHtml(f)}</div><div class="legend"><del>${f.label === "Previous round" ? "previous round" : "OMV"} wording removed</del> <ins>supplier's wording</ins></div></details>`;
       if (f.rule) h += `<a href="#" class="rulelink" data-id="${f.rule.id}">Rule ${esc(f.rule.id)} ▾</a>`;
       h += `</div>`;
       if (f.rule) {
         const r = f.rule;
         h += `<div class="rulepop" hidden><button class="x" title="Close">×</button><div class="rid">${esc(r.id)} <span>· ${esc(r.source.replace("OMV GPC Jan 2026, ", ""))}</span></div>`;
         h += `<div class="rstd"><b>OMV position:</b> ${esc(r.standard)}</div><ul>` + CG.OUTCOMES[r.id].map((o) => `<li>${esc(o)}</li>`).join("") + `</ul>`;
-        h += `<a href="#" class="tobook" data-id="${r.id}">Open in Rulebook ›</a></div>`;
+        h += `<div class="popacts"><a href="${ruleChangeMail(r)}" class="sugg" data-id="${r.id}" target="_blank" rel="noopener">✎ Suggest a change to this rule</a><a href="#" class="tobook" data-id="${r.id}">Open in Rulebook ›</a></div></div>`;
       }
 
       if (d) {
@@ -633,6 +748,9 @@
       const item = b.closest(".item"), a = item.querySelector(".rulelink");
       item.querySelector(".rulepop").hidden = true; a.textContent = a.textContent.replace("▴", "▾");
     }));
+    root.querySelectorAll(".sugg").forEach((a) => (a.onclick = () => addEvent("Rule change suggested", a.dataset.id)));
+    const copy = root.querySelector(".copysum");
+    if (copy) copy.onclick = () => copyText(summaryText());
     root.querySelectorAll(".tobook").forEach((a) => (a.onclick = (e) => { e.preventDefault(); openRule(a.dataset.id); }));
     root.querySelectorAll(".act[data-k]").forEach((el) => (el.onclick = () => choose(+el.dataset.i, el.dataset.k)));
     root.querySelectorAll(".undo[data-i]:not(.propose)").forEach((el) => (el.onclick = () => guarded(() => undo(+el.dataset.i))));

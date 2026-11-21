@@ -93,3 +93,15 @@ ins{color:var(--ok);background:var(--ok-bg);text-decoration:underline}
 .linkbtn:disabled{opacity:.5;cursor:default}
 .summary.stop{border-color:var(--esc);background:var(--esc-bg);font-size:12.5px}
 .summary.stop b{color:var(--esc)}
+.compare{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;margin:0 0 8px;font-size:12px}
+.compare label{color:var(--muted)}
+.compare select{flex:1 1 150px;font:inherit;font-size:12px;padding:4px 6px;border:1px solid var(--line);border-radius:4px;background:#fff;color:var(--ink)}
+.compare a{font-size:11.5px}
+.cmp{font-size:12px;margin:-2px 0 6px}
+.sumacts{display:flex;align-items:center;gap:12px;margin-top:4px}
+.popacts{display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px 10px;margin-top:2px}
+.sugg{font-size:11.5px}
+.rule .sugg{display:inline-block;margin-top:3px}
+/* Decided changes shrink to one line so the open ones stand out. */
+.item.decided .w,.item.decided .links,.item.decided .rulepop{display:none}
+.item.decided .done{margin-top:4px}

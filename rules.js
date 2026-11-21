@@ -8,9 +8,11 @@
   const RULEBOOK_VERSION = "v0.2-draft (not approved by OMV Legal)";
 
   // ---------------- the template ----------------
-  const T = root.OMV_TEMPLATE;
-  const TEMPLATE_NAME = T.name;
-  const OMV_STANDARD = T.clauses.map((c) => ({ num: c.num, head: c.head, paras: c.paras, body: c.paras.join(" ").replace(/\s+/g, " ").trim() }));
+  // A baseline is what the supplier's version is compared with: an approved template, or an uploaded earlier round.
+  const makeBase = (clauses) => clauses.map((c) => ({ num: c.num, head: c.head, paras: c.paras, body: c.paras.join(" ").replace(/\s+/g, " ").trim() }));
+  const TEMPLATES = root.OMV_TEMPLATES.map((t) => ({ id: t.id, name: t.name, short: t.short, source: t.source, base: makeBase(t.clauses) }));
+  const TEMPLATE_NAME = TEMPLATES[0].name;
+  const OMV_STANDARD = TEMPLATES[0].base; // the current template; the rulebook is written for it
 
   // ---------------- the rulebook ----------------
   // Each rule covers one clause (found by words in its heading) and checks one point.
@@ -218,6 +220,12 @@
     const share = matched.length / base.length;
     return { share, avg, ok: share >= 0.6 && avg >= 0.6 };
   }
+  // Which template is this supplier version based on? Scores every template, best first.
+  // Ties go to the newer (first) template.
+  function detectTemplate(cp) {
+    return TEMPLATES.map((t, k) => ({ t, k, m: templateMatch(t.base, cp) }))
+      .sort((x, y) => (y.m.share * y.m.avg) - (x.m.share * x.m.avg) || x.k - y.k);
+  }
 
   // ---------------- 3-5. check + decide ----------------
   function review(base, cp) {
@@ -299,12 +307,12 @@
         }
       } else if (!f.c) { omv = q(f.b.body); sup = "(whole clause deleted)"; }
       else { omv = "(no such clause)"; sup = q(f.c.body); }
-      L.push("", `OMV ▸ ${omv}`, `Supplier ▸ ${sup}`);
+      L.push("", `${f.label || "OMV"} ▸ ${omv}`, `Supplier ▸ ${sup}`);
     }
     if (f.b && f.c && f.b.num !== f.c.num) L.push("", `Note: OMV clause ${f.b.num} is clause ${f.c.num} here.`);
     if (f.rule && !f.cosmetic && f.a !== "review") L.push("", `Rule ${f.rule.id} · ${f.rule.source}`);
     return L.join("\n");
   }
 
-  root.ContractGuard = { templateMatch, RULEBOOK_VERSION, TEMPLATE_NAME, OMV_STANDARD, diffSeq, RULES, OUTCOMES, CONTACTS, RULEBOOK_OWNER, findRule, sentenceDiff, LABEL, TAG, isOurs, suggestion, splitClauses, review, commentText, diffWords };
+  root.ContractGuard = { templateMatch, detectTemplate, TEMPLATES, makeBase, RULEBOOK_VERSION, TEMPLATE_NAME, OMV_STANDARD, diffSeq, RULES, OUTCOMES, CONTACTS, RULEBOOK_OWNER, findRule, sentenceDiff, LABEL, TAG, isOurs, suggestion, splitClauses, review, commentText, diffWords };
 })(typeof window !== "undefined" ? window : globalThis);
