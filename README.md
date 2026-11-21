@@ -6,7 +6,7 @@ A "Review with ContractGuard" button in Word. It compares a supplier's returned 
 - `rules.js`: the rulebook (9 draft rules) and the review logic
 - `taskpane.html` / `taskpane.js` / `taskpane.css`: the side panel (uses Office.js to read the document, add comments and make tracked changes)
 - `manifest.xml`: tells Word the add-in's name, button and web address
-- `samples/`: `omv-template.docx` (the template), `supplier-example1.docx` (the task example: payment 60 → 30 days), `supplier-tough-round.docx` (10 realistic changes)
+- `samples/`: `omv-template.docx` (the template), `supplier-example1.docx` (the task example: payment 60 → 30 days), `supplier-tough-round.docx` (11 realistic changes), `supplier-own-terms.docx` (not based on OMV’s template: ContractGuard stops)
 - `INSTALL.md`: how to install it in Word
 
 Hosted with GitHub Pages at https://anabeldautovic.github.io/contractguard-addin/

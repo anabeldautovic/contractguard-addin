@@ -18,13 +18,27 @@
   // ContractGuard says so and never accepts on its own.
   // A rule answers: ok (accept), counter (reject: put OMV wording back), route / esc (escalate),
   // or same (its point is unchanged).
-  const num = (t, re) => { const m = t.match(re); return m ? +m[1] : null; };
   const yrs = (n) => (n === 1 ? "1 year" : Number.isInteger(n) ? `${n} years` : `${Math.round(n * 12)} months`);
   const SRC = (n) => `OMV GPC Jan 2026, clause ${n}`;
+
+  // Read a period however it's written: "sixty (60) days", "30 calendar days", "one month", "4 weeks", "twelve months".
+  const WORDNUM = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12,
+    fourteen: 14, fifteen: 15, twenty: 20, thirty: 30, "forty-five": 45, "forty five": 45, sixty: 60, ninety: 90, "one hundred twenty": 120 };
+  const NUM = `(?:(\\d+)|\\b(${Object.keys(WORDNUM).sort((a, b) => b.length - a.length).join("|")})\\b)(?:\\s*\\((\\d+)\\))?`;
+  const UNIT = `(?:calendar\\s+|working\\s+|business\\s+)?(days?|weeks?|months?|years?)`;
+  // Finds "<number> <unit> <after>" and returns the length in `want` units ("days" or "years").
+  function period(t, after, want) {
+    const m = t.match(new RegExp(`${NUM}\\s*${UNIT}\\s+${after}`, "i"));
+    if (!m) return null;
+    const n = +(m[3] || m[1] || WORDNUM[m[2].toLowerCase()]), u = m[4].toLowerCase();
+    if (want === "years") return n / (u.startsWith("year") ? 1 : u.startsWith("month") ? 12 : u.startsWith("week") ? 52 : 365);
+    return n * (u.startsWith("week") ? 7 : u.startsWith("month") ? 30 : u.startsWith("year") ? 365 : 1);
+  }
+
   const RULES = [
-    { id: "R-PAY-01", keys: ["payment"], scope: /\bdays?\b/i, standard: "OMV pays 60 days after receiving a proper invoice.", source: SRC("6.4"),
+    { id: "R-PAY-01", keys: ["payment"], scope: /\b(days?|weeks?|months?)\b/i, standard: "OMV pays 60 days after receiving a proper invoice.", source: SRC("6.4"),
       test(t) {
-        const d = num(t, /(\d+)\)?\s*(?:calendar\s+)?days\s+(?:from|after)\s+(?:the\s+)?receipt/i);
+        const d = period(t, "(?:from|after)\\s+(?:the\\s+)?receipt", "days");
         if (d === null) return { a: "counter", why: "Couldn't find the 60-day payment period any more. Put OMV's wording back, or read the clause." };
         if (d < 60) return { a: "route", to: "Finance / Procurement", why: `Payment period is ${d} days instead of 60. Paying ${60 - d} days earlier costs OMV working capital, so this is a commercial decision rather than a legal one.` };
         if (d > 60) return { a: "ok", why: `Payment period is ${d} days, longer than the standard 60. This favours OMV.` };
@@ -32,8 +46,7 @@
       } },
     { id: "R-WAR-01", keys: ["warranty"], scope: /warranty period|\byears?\b|\bmonths?\b/i, standard: "Warranty of 2 years for movables, 3 years for immovables.", source: SRC("7.2"),
       test(t) {
-        const toY = (m) => (m ? (/month/i.test(m[2]) ? +m[1] / 12 : +m[1]) : null);
-        const mov = toY(t.match(/(\d+)\)?\s*(years?|months?)\s+for movables/i)), imm = toY(t.match(/(\d+)\)?\s*(years?|months?)\s+for immovables/i));
+        const mov = period(t, "for\\s+movables", "years"), imm = period(t, "for\\s+immovables", "years");
         if (mov === null || imm === null) return { a: "counter", why: "The warranty periods are gone or reworded. Put OMV's periods back (2 years movables, 3 years immovables)." };
         if (mov < 2 || imm < 3) return { a: "counter", why: `The supplier shortens the warranty to ${yrs(mov)} for movables and ${yrs(imm)} for immovables. OMV's standard is 2 and 3 years. Reject to put OMV's periods back.` };
         if (mov > 2 || imm > 3) return { a: "ok", why: "The warranty is longer than OMV's standard. This favours OMV." };
@@ -177,6 +190,35 @@
     return { omv: d.omv.join(" "), supplier: d.supplier.join(" ") };
   }
 
+  // A changed definition quietly changes every clause that uses the defined term.
+  // Find which terms changed (e.g. "Force Majeure") and where OMV's text uses them.
+  function changedTerms(paras, other) {
+    const keep = new Set(other), terms = new Set();
+    let cur = [];
+    for (const p of paras) {
+      if (/^\d+\.\d+\s+["“]/.test(p)) cur = [...p.matchAll(/["“]([^"”]+)["”]/g)].map((m) => m[1]);
+      if (!keep.has(p)) cur.forEach((t) => terms.add(t));
+    }
+    return terms;
+  }
+  function definitionNote(b, c, base) {
+    const terms = new Set([...changedTerms(c.paras, b.paras), ...changedTerms(b.paras, c.paras)]);
+    const notes = [];
+    for (const t of terms) {
+      const used = base.filter((x) => x !== b && x.body.includes(t)).map((x) => x.num);
+      if (used.length) notes.push(`“${t}” is used in clause${used.length > 1 ? "s" : ""} ${used.join(", ")}`);
+    }
+    return notes.length ? ` Careful: a changed definition also changes the clauses that use it. ${notes.join("; ")}.` : "";
+  }
+
+  // Is this document based on OMV's template at all? Share of OMV clauses found, and how similar they are.
+  function templateMatch(base, cp) {
+    const matched = matchClauses(base, cp).filter((p) => p.b && p.c);
+    const avg = matched.length ? matched.reduce((s, p) => s + sim(p.b.body, p.c.body), 0) / matched.length : 0;
+    const share = matched.length / base.length;
+    return { share, avg, ok: share >= 0.6 && avg >= 0.6 };
+  }
+
   // ---------------- 3-5. check + decide ----------------
   function review(base, cp) {
     const findings = [], same = [];
@@ -208,6 +250,7 @@
         }
       }
       if (b && c) f.changes = wordChanges(b.body, c.body);
+      if (b && c && /definition/i.test(head)) f.why += definitionNote(b, c, base);
       findings.push(f);
     }
     // Clause order, as in the document. A deleted clause sits where it was in OMV's standard.
@@ -263,5 +306,5 @@
     return L.join("\n");
   }
 
-  root.ContractGuard = { RULEBOOK_VERSION, TEMPLATE_NAME, OMV_STANDARD, diffSeq, RULES, OUTCOMES, CONTACTS, RULEBOOK_OWNER, findRule, sentenceDiff, LABEL, TAG, isOurs, suggestion, splitClauses, review, commentText, diffWords };
+  root.ContractGuard = { templateMatch, RULEBOOK_VERSION, TEMPLATE_NAME, OMV_STANDARD, diffSeq, RULES, OUTCOMES, CONTACTS, RULEBOOK_OWNER, findRule, sentenceDiff, LABEL, TAG, isOurs, suggestion, splitClauses, review, commentText, diffWords };
 })(typeof window !== "undefined" ? window : globalThis);

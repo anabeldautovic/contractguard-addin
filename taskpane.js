@@ -164,9 +164,21 @@
     box.querySelector(".no").focus();
   }
   function onRun() {
-    const made = decisions.filter((d) => d && !d.auto).length;
-    if (review && made) ask(`Run the review again? This replaces ContractGuard's comments, including your ${made} decision repl${made === 1 ? "y" : "ies"}. Your decisions stay in the Log.`, "Run again", () => guarded(runReview));
-    else guarded(runReview);
+    guarded(async () => {
+      // Open tracked changes make the comparison unreliable: which text counts, the old or the new?
+      let tracked = 0;
+      if (Office.context.requirements.isSetSupported("WordApi", "1.6")) {
+        try {
+          await Word.run(async (ctx) => { const tc = ctx.document.body.getTrackedChanges(); tc.load("items"); await ctx.sync(); tracked = tc.items.length; });
+        } catch (e) { console.warn(e); }
+      }
+      const made = decisions.filter((d) => d && !d.auto).length;
+      const warn = [];
+      if (tracked) warn.push(`This document still has ${tracked} open tracked change${tracked === 1 ? "" : "s"} (from the supplier, or from earlier Rejects). For a reliable comparison, accept or reject them first in Word's Review tab.`);
+      if (review && made) warn.push(`Running again replaces ContractGuard's comments, including your ${made} decision repl${made === 1 ? "y" : "ies"}. Your decisions stay in the Log.`);
+      if (warn.length) setTimeout(() => ask(warn.join("<br><br>"), "Run anyway", () => guarded(runReview)), 0);
+      else setTimeout(() => guarded(runReview), 0);
+    });
   }
   function onClear() {
     guarded(async () => {
@@ -263,6 +275,18 @@
       const { paras, cp } = await readClauses(ctx);
       if (cp.length < 2) {
         status("I couldn't find numbered clauses (like \"3. Prices and Payment\") in this document, so I can't review it. Please review it by hand.", true);
+        return;
+      }
+      // Stop if this isn't based on OMV's template (e.g. the supplier sent its own terms).
+      const m = CG.templateMatch(CG.OMV_STANDARD, cp);
+      if (!m.ok) {
+        const found = Math.round(m.share * CG.OMV_STANDARD.length);
+        status("Stopped: this doesn't look like OMV's template.", true);
+        $("result").innerHTML = `<div class="summary stop"><b>This doesn't look like it's based on OMV's General Conditions of Purchase.</b>
+          Only ${found} of ${CG.OMV_STANDARD.length} OMV clauses were found, and their wording is ${Math.round(m.avg * 100)}% similar.
+          The supplier may have sent its own terms, or a different template. ContractGuard stops here instead of flagging every line: please review this contract by hand.</div>`;
+        review = null; decisions = []; renderRules(); showTab("changes");
+        addEvent("Review stopped", `Not OMV's template: ${found}/${CG.OMV_STANDARD.length} clauses found, ${Math.round(m.avg * 100)}% similar`);
         return;
       }
 
