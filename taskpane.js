@@ -7,11 +7,10 @@
   const PILL = { esc: "esc", counter: "counter", route: "route", ok: "ok" };
   const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9%]+/g, " ").trim();
 
-  // The lawyer's four choices. "rec" = which button ContractGuard suggests for each kind of finding.
+  // The lawyer's three choices (to edit, the lawyer just types in the document). "rec" = which button ContractGuard suggests for each kind of finding.
   const ACTIONS = [
     { k: "accept", label: "Accept" },
     { k: "reject", label: "Reject" },
-    { k: "edit", label: "Edit" },
     { k: "escalate", label: "Escalate" },
   ];
   const REC = { ok: "accept", counter: "reject", route: "escalate", esc: "escalate" };
@@ -129,7 +128,7 @@
     });
   }
 
-  // ---------------- the four decisions ----------------
+  // ---------------- the three decisions ----------------
   async function getComment(ctx, f) {
     const cs = ctx.document.body.getComments();
     cs.load("items/id");
@@ -183,15 +182,6 @@
         }
         text = f.b ? "Rejected. OMV standard wording put back." : "Rejected. Supplier's new clause removed.";
         text += " Shown as a tracked change.";
-      }
-
-      else if (k === "edit") {
-        if (c) {
-          const target = c.bodyIdx.length ? paras.items[c.bodyIdx[0]].getRange("Whole").expandTo(paras.items[c.bodyIdx[c.bodyIdx.length - 1]].getRange("Whole")) : paras.items[c.headIdx].getRange("Whole");
-          target.select();
-        }
-        if (cm) cm.reply("✎ Lawyer is editing this clause.");
-        text = "Editing. Clause selected in the document. The comment stays open.";
       }
 
       else if (k === "escalate") {
