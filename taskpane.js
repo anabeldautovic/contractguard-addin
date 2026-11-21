@@ -503,8 +503,14 @@
       h += `<div class="w">${esc(f.why)}</div>`;
       h += `<div class="links">`;
       if (!f.cosmetic) h += `<details><summary>Show the change</summary><div class="diff">${diffHtml(f)}</div><div class="legend"><del>OMV wording removed</del> <ins>supplier's wording</ins></div></details>`;
-      if (f.rule) h += `<a href="#" class="rulelink" data-id="${f.rule.id}">Rule ${esc(f.rule.id)} ›</a>`;
+      if (f.rule) h += `<a href="#" class="rulelink" data-id="${f.rule.id}">Rule ${esc(f.rule.id)} ▾</a>`;
       h += `</div>`;
+      if (f.rule) {
+        const r = f.rule;
+        h += `<div class="rulepop" hidden><button class="x" title="Close">×</button><div class="rid">${esc(r.id)} <span>· ${esc(r.source.replace("OMV GPC Jan 2026, ", ""))}</span></div>`;
+        h += `<div class="rstd"><b>OMV position:</b> ${esc(r.standard)}</div><ul>` + CG.OUTCOMES[r.id].map((o) => `<li>${esc(o)}</li>`).join("") + `</ul>`;
+        h += `<a href="#" class="tobook" data-id="${r.id}">Open in Rulebook ›</a></div>`;
+      }
 
       if (d) {
         h += `<div class="done d-${d.k}">${esc(d.text)}${d.note ? `<div class="note">Reason: ${esc(d.note)}</div>` : ""}</div>`;
@@ -547,13 +553,23 @@
     // Click anywhere on a change (except its buttons and forms) to jump to it in the document.
     root.querySelectorAll(".item").forEach((el) => {
       el.onclick = (e) => {
-        if (e.target.closest("button, summary, a, textarea, input, label, .form")) return;
+        if (e.target.closest("button, summary, a, textarea, input, label, .form, .rulepop")) return;
         const i = +el.dataset.i;
         focusCard(i, false);
         guarded(() => jumpTo(R.findings[i]));
       };
     });
-    root.querySelectorAll(".rulelink").forEach((a) => (a.onclick = (e) => { e.preventDefault(); openRule(a.dataset.id); }));
+    // Rule link: show the rule in a small pop-up box inside the card; click again or × to close.
+    root.querySelectorAll(".rulelink").forEach((a) => (a.onclick = (e) => {
+      e.preventDefault();
+      const pop = a.closest(".item").querySelector(".rulepop"), open = pop.hidden;
+      pop.hidden = !open; a.textContent = a.textContent.replace(open ? "▾" : "▴", open ? "▴" : "▾");
+    }));
+    root.querySelectorAll(".rulepop .x").forEach((b) => (b.onclick = () => {
+      const item = b.closest(".item"), a = item.querySelector(".rulelink");
+      item.querySelector(".rulepop").hidden = true; a.textContent = a.textContent.replace("▴", "▾");
+    }));
+    root.querySelectorAll(".tobook").forEach((a) => (a.onclick = (e) => { e.preventDefault(); openRule(a.dataset.id); }));
     root.querySelectorAll(".act[data-k]").forEach((el) => (el.onclick = () => choose(+el.dataset.i, el.dataset.k)));
     root.querySelectorAll(".undo[data-i]:not(.propose)").forEach((el) => (el.onclick = () => guarded(() => undo(+el.dataset.i))));
     root.querySelectorAll(".propose").forEach((el) => (el.onclick = () => { proposing = +el.dataset.i; showResult(); }));
