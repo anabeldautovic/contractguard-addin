@@ -76,8 +76,12 @@
         return { a: "esc", to: "Senior lawyer", why: "Governing law or court was changed. This needs a senior lawyer." };
       } },
   ];
-  const LABEL = { ok: "Accept", route: "Route", counter: "Counter-propose", esc: "Escalate" };
-  const ORDER = { esc: 0, counter: 1, route: 2, ok: 3 };
+  // What ContractGuard suggests. Same words as the buttons in the panel.
+  // Rules answer ok / counter / route / esc; these map onto the lawyer's three buttons,
+  // plus "review" when no approved rule covers the change (ContractGuard makes no suggestion).
+  const LABEL = { escalate: "Escalate", reject: "Reject", review: "You decide", accept: "Accept" };
+  const ORDER = { escalate: 0, reject: 1, review: 2, accept: 3 };
+  const FROM_RULE = { ok: "accept", counter: "reject", route: "escalate", esc: "escalate" };
   const findRule = (head) => { const h = head.toLowerCase(); return RULES.find((r) => r.keys.some((k) => h.includes(k))); };
 
   // ---------------- 1. read ----------------
@@ -116,57 +120,84 @@
     cp.forEach((c, j) => { if (!used.has(j)) pairs.push({ b: null, c }); });
     return pairs;
   }
-  // Word-level diff: returns {removed:[...], added:[...]} as phrases.
-  function wordChanges(a, b) {
+  // Word-level diff. Returns a list of {t: "=", "-" or "+", w: word}.
+  function diffWords(a, b) {
     const A = a.split(/\s+/).filter(Boolean), B = b.split(/\s+/).filter(Boolean), n = A.length, m = B.length;
     const L = Array.from({ length: n + 1 }, () => new Int32Array(m + 1));
     for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) L[i][j] = A[i] === B[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
-    const removed = [], added = []; let i = 0, j = 0, r = [], ad = [];
-    const flush = () => { if (r.length) removed.push(r.join(" ")); if (ad.length) added.push(ad.join(" ")); r = []; ad = []; };
+    const ops = []; let i = 0, j = 0;
     while (i < n && j < m) {
-      if (A[i] === B[j]) { flush(); i++; j++; }
-      else if (L[i + 1][j] >= L[i][j + 1]) r.push(A[i++]);
-      else ad.push(B[j++]);
+      if (A[i] === B[j]) { ops.push({ t: "=", w: A[i] }); i++; j++; }
+      else if (L[i + 1][j] >= L[i][j + 1]) ops.push({ t: "-", w: A[i++] });
+      else ops.push({ t: "+", w: B[j++] });
     }
-    while (i < n) r.push(A[i++]); while (j < m) ad.push(B[j++]); flush();
+    while (i < n) ops.push({ t: "-", w: A[i++] });
+    while (j < m) ops.push({ t: "+", w: B[j++] });
+    return ops;
+  }
+  // The same diff as phrases: {removed:[...], added:[...]}. "added" is used to highlight words in Word.
+  function wordChanges(a, b) {
+    const removed = [], added = []; let r = [], ad = [];
+    const flush = () => { if (r.length) removed.push(r.join(" ")); if (ad.length) added.push(ad.join(" ")); r = []; ad = []; };
+    for (const o of diffWords(a, b)) { if (o.t === "=") flush(); else (o.t === "-" ? r : ad).push(o.w); }
+    flush();
     return { removed, added };
+  }
+  // Only the sentences that differ, so a comment shows full sentences instead of word fragments.
+  const sentences = (t) => t.split(/(?<=[.!?])\s+(?=[A-Z0-9"“(])/).map((x) => x.trim()).filter(Boolean);
+  function changedSentences(a, b) {
+    const A = sentences(a), B = sentences(b), sa = new Set(A), sb = new Set(B);
+    return { omv: A.filter((x) => !sb.has(x)).join(" "), supplier: B.filter((x) => !sa.has(x)).join(" ") };
   }
 
   // ---------------- 3-5. check + decide ----------------
   function review(base, cp) {
     const findings = [], same = [];
-    for (const { b, c } of matchClauses(base, cp)) {
+    const pairs = matchClauses(base, cp);
+    for (const { b, c } of pairs) {
       if (b && c && b.body === c.body) { same.push({ b, c }); continue; }
       const head = (c || b).head, rule = findRule(head);
       const f = { b, c, head, rule, to: null, cosmetic: false };
-      if (!c) { f.a = "esc"; f.why = "The supplier deleted this whole clause. A lawyer must decide whether OMV can live without it."; }
-      else if (!b) { f.a = "esc"; f.why = "The supplier added a clause that is not in OMV's standard. No rule covers it, so a lawyer reviews it."; }
-      else if (norm(b.body) === norm(c.body)) { f.a = "ok"; f.cosmetic = true; f.why = "Only punctuation, capitals or spacing changed. No change in meaning."; }
-      else if (!rule) { f.a = "esc"; f.why = "This clause changed, but the rulebook has no rule for it yet. ContractGuard doesn't guess, so a lawyer reviews it."; }
-      else { const r = rule.test(c.body); f.a = r.a; f.to = r.to || null; f.why = r.why; }
+      if (!c) { f.a = "review"; f.why = "The supplier deleted this whole clause. No rule covers a deletion, so you decide whether OMV can live without it."; }
+      else if (!b) { f.a = "review"; f.why = "The supplier added a clause that is not in OMV's standard. No rule covers it, so you decide."; }
+      else if (norm(b.body) === norm(c.body)) { f.a = "accept"; f.cosmetic = true; f.why = "Only punctuation, capitals or spacing changed. No change in meaning, so ContractGuard accepted it."; }
+      else if (!rule) { f.a = "review"; f.why = "This clause changed, but no approved rule covers it. ContractGuard doesn't guess, so you decide."; }
+      else {
+        const r = rule.test(c.body);
+        f.to = r.to || null;
+        f.a = r.a === "esc" && !f.to ? "review" : FROM_RULE[r.a];
+        f.why = r.why;
+      }
       if (b && c) f.changes = wordChanges(b.body, c.body);
       findings.push(f);
     }
-    findings.sort((x, y) => ORDER[x.a] - ORDER[y.a]);
+    // Clause order, as in the document. A deleted clause sits where it was in OMV's standard.
+    const pos = (f) => {
+      if (f.c) return cp.indexOf(f.c);
+      const k = base.indexOf(f.b);
+      for (const s of base.slice(k + 1)) { const p = pairs.find((x) => x.b === s && x.c); if (p) return cp.indexOf(p.c) - 0.5; }
+      return cp.length;
+    };
+    findings.sort((x, y) => pos(x) - pos(y));
     return { findings, same, total: base.length };
   }
 
-  const TAG = "[ContractGuard]";
+  const TAG = "ContractGuard ·";
+  const isOurs = (text) => /^(ContractGuard ·|\[ContractGuard\])/.test(text || "");
+  const suggestion = (f) => f.a === "review" ? "You decide" : LABEL[f.a] + (f.a === "escalate" ? ` to ${f.to || "Senior lawyer"}` : "");
   function commentText(f) {
-    const label = f.cosmetic ? "Wording only" : LABEL[f.a] + (f.to ? ` to ${f.to}` : "");
-    const q = (x) => `“${x}”`;
-    const lines = [`${TAG} ${label.toUpperCase()}`];
-    if (!f.c) lines.push(`Clause ${f.b.num} (${f.head}) is missing from the supplier's version.`);
-    if (f.changes && !f.cosmetic) {
-      if (f.changes.removed.length) lines.push("Removed: " + f.changes.removed.map(q).join(" / "));
-      if (f.changes.added.length) lines.push("Added: " + f.changes.added.map(q).join(" / "));
+    const lines = [`${TAG} ${f.cosmetic ? "Accepted: wording only" : (f.a === "review" ? "No rule: you decide" : "Suggest: " + suggestion(f))}`, f.why];
+    if (!f.cosmetic) {
+      if (f.b && f.c) {
+        const d = changedSentences(f.b.body, f.c.body);
+        lines.push("", "OMV: " + (d.omv || "(nothing)"), "Supplier: " + (d.supplier || "(deleted)"));
+      } else if (!f.c) lines.push("", `OMV clause ${f.b.num} (${f.head}): ${f.b.body}`, "Supplier: (whole clause deleted)");
+      else lines.push("", "OMV: (no such clause)", "Supplier: " + f.c.body);
     }
-    if (f.b && f.c && f.b.num !== f.c.num) lines.push(`Renumbered: OMV clause ${f.b.num} is clause ${f.c.num} here.`);
-    lines.push("Why: " + f.why);
-    if (f.rule && !f.cosmetic) lines.push(`Rule ${f.rule.id}. OMV standard: ${f.rule.standard} Source: ${f.rule.source}.`);
-    lines.push("Decide with the buttons in the ContractGuard panel.");
+    if (f.b && f.c && f.b.num !== f.c.num) lines.push(`Note: OMV clause ${f.b.num} is clause ${f.c.num} here.`);
+    if (f.rule && !f.cosmetic && f.a !== "review") lines.push("", `Rule ${f.rule.id} · ${f.rule.source}`);
     return lines.join("\n");
   }
 
-  root.ContractGuard = { RULEBOOK_VERSION, OMV_STANDARD, RULES, LABEL, TAG, splitClauses, review, commentText };
+  root.ContractGuard = { RULEBOOK_VERSION, OMV_STANDARD, RULES, LABEL, TAG, isOurs, suggestion, splitClauses, review, commentText, diffWords };
 })(typeof window !== "undefined" ? window : globalThis);

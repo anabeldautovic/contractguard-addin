@@ -4,19 +4,19 @@
   const CG = window.ContractGuard;
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
-  const PILL = { esc: "esc", counter: "counter", route: "route", ok: "ok" };
+  // Colour for each kind of suggestion (CSS classes).
+  const PILL = { escalate: "esc", reject: "counter", review: "route", accept: "ok" };
   const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9%]+/g, " ").trim();
 
-  // The lawyer's three choices (to edit, the lawyer just types in the document). "rec" = which button ContractGuard suggests for each kind of finding.
+  // The lawyer's three choices (to edit, the lawyer just types in the document).
   const ACTIONS = [
     { k: "accept", label: "Accept" },
     { k: "reject", label: "Reject" },
     { k: "escalate", label: "Escalate" },
   ];
-  const REC = { ok: "accept", counter: "reject", route: "escalate", esc: "escalate" };
 
   let review = null;     // last review result
-  let decisions = [];    // decisions[i] = {k, text} for finding i, or null
+  let decisions = [];    // decisions[i] = {k, text, replyId, auto} for finding i, or null
   let busy = false;
 
   function status(msg, isErr) { const s = $("status"); s.textContent = msg; s.className = isErr ? "err" : ""; }
@@ -51,7 +51,7 @@
     cs.load("items/content");
     await ctx.sync();
     let n = 0;
-    cs.items.forEach((c) => { if ((c.content || "").startsWith(CG.TAG)) { c.delete(); n++; } });
+    cs.items.forEach((c) => { if (CG.isOurs(c.content)) { c.delete(); n++; } });
     await ctx.sync();
     return n;
   }
@@ -116,9 +116,12 @@
       // Write comments and queue highlight searches
       const searches = [], comments = [];
       for (const f of R.findings) {
-        const range = f.c ? clauseRange(paras, f.c) : paras.items[0].getRange("Whole");
+        // A deleted clause gets its comment on the next OMV clause still in the document (or the title).
+        const next = f.c ? null : CG.OMV_STANDARD.slice(CG.OMV_STANDARD.indexOf(f.b) + 1).map((x) => locate(cp, x)).find(Boolean);
+        const range = f.c ? clauseRange(paras, f.c) : next ? paras.items[next.headIdx].getRange("Whole") : paras.items[0].getRange("Whole");
         if (f.c) searches.push(...findAdded(paras, f.c, f));
         const cm = range.insertComment(CG.commentText(f));
+        if (f.cosmetic) cm.resolved = true; // wording-only changes are accepted automatically
         cm.load("id");
         comments.push(cm);
       }
@@ -128,9 +131,10 @@
       await ctx.sync();
 
       review = R;
-      decisions = R.findings.map(() => null);
+      decisions = R.findings.map((f) => f.cosmetic ? { k: "accept", auto: true, text: "Accepted automatically." } : null);
       showResult();
-      status("Done. Comments added. Decide each change below.");
+      const open = decisions.filter((d) => !d).length;
+      status(R.findings.length ? `Done. ${open} change${open === 1 ? "" : "s"} for you to decide.` : "Done. No changes from the OMV standard.");
     });
   }
 
@@ -254,30 +258,43 @@
   }
 
   // ---------------- the panel ----------------
+  // Word-by-word difference: deleted OMV words struck through, supplier's words underlined.
+  function diffHtml(f) {
+    if (!f.b) return `<ins>${esc(f.c.body)}</ins>`;
+    if (!f.c) return `<del>${esc(f.b.body)}</del>`;
+    return CG.diffWords(f.b.body, f.c.body).map((o) => o.t === "=" ? esc(o.w) : o.t === "-" ? `<del>${esc(o.w)}</del>` : `<ins>${esc(o.w)}</ins>`).join(" ").replace(/<\/del> <del>/g, " ").replace(/<\/ins> <ins>/g, " ");
+  }
+
   function showResult() {
     const R = review;
-    const cnt = { esc: 0, counter: 0, route: 0, ok: 0 };
-    R.findings.forEach((f) => cnt[f.a]++);
     const n = R.findings.length;
     const nd = decisions.filter(Boolean).length;
+    const cnt = { escalate: 0, reject: 0, review: 0, accept: 0 };
+    R.findings.forEach((f) => cnt[f.a]++);
     const moved = R.same.filter((s) => s.b.num !== s.c.num).map((s) => `${s.b.head} moved from ${s.b.num} to ${s.c.num}`);
-    let h = `<div class="summary"><b>${n ? `${n} change${n > 1 ? "s" : ""}, ${cnt.esc} escalation${cnt.esc === 1 ? "" : "s"}` : "No changes found"}</b><div class="pills">`;
-    ["esc", "counter", "route", "ok"].forEach((k) => { if (cnt[k]) h += `<span class="pill ${PILL[k]}">${cnt[k]} ${CG.LABEL[k].toLowerCase()}</span>`; });
-    h += `<span class="pill same">${R.same.length} identical</span></div>`;
-    h += `<div>Proof nothing else changed: ${R.same.length} of ${R.total} OMV clauses are word-for-word identical.${moved.length ? " Same wording, new number: " + esc(moved.join("; ")) + "." : ""}</div>`;
+
+    let h = `<div class="summary"><b>${n ? `${n} change${n > 1 ? "s" : ""} from the OMV standard` : "No changes from the OMV standard"}</b>`;
+    if (n) {
+      h += `<div class="pills">`;
+      [["escalate", "to escalate"], ["reject", "to reject"], ["review", "you decide"], ["accept", "to accept"]].forEach(([k, t]) => { if (cnt[k]) h += `<span class="pill ${PILL[k]}">${cnt[k]} ${t}</span>`; });
+      h += `</div>`;
+    }
+    h += `<div class="proof">✓ ${R.same.length} of ${R.total} OMV clauses are word-for-word identical.${moved.length ? " Same wording, new number: " + esc(moved.join("; ")) + "." : ""}</div>`;
     if (n) h += `<div class="progress">${nd} of ${n} decided</div><div class="bar"><i style="width:${Math.round((100 * nd) / n)}%"></i></div>`;
     h += `</div>`;
 
     R.findings.forEach((f, i) => {
-      const label = f.cosmetic ? "Wording only" : CG.LABEL[f.a] + (f.to ? ` to ${f.to}` : "");
       const d = decisions[i];
-      h += `<div class="item l-${f.a}${d ? " decided" : ""}"><div class="top" data-i="${i}"><div class="h">${esc((f.c || f.b).num)}. ${esc(f.head)} · ${esc(label)}</div><div class="w">${esc(f.why)}</div></div>`;
+      const rec = f.a === "review" ? null : f.a;
+      const tag = f.cosmetic ? "Wording only" : f.a === "review" ? "No rule: you decide" : "Suggest: " + CG.suggestion(f);
+      h += `<div class="item l-${PILL[f.a]}${d ? " decided" : ""}">`;
+      h += `<div class="top" data-i="${i}" title="Show in document"><div class="h">${esc((f.c || f.b).num)}. ${esc(f.head)}</div><span class="tag ${PILL[f.a]}">${esc(tag)}</span></div>`;
+      h += `<div class="w">${esc(f.why)}</div>`;
+      if (!f.cosmetic) h += `<details><summary>Show the change</summary><div class="diff">${diffHtml(f)}</div><div class="legend"><del>OMV wording removed</del> <ins>supplier's wording</ins></div></details>`;
       if (d) {
         h += `<div class="done d-${d.k}">${esc(d.text)}</div><button class="undo" data-i="${i}">↩ Go back</button>`;
       } else {
-        const rec = REC[f.a];
         h += `<div class="acts">` + ACTIONS.map((a) => `<button class="act${a.k === rec ? " rec" : ""}" data-i="${i}" data-k="${a.k}"${busy ? " disabled" : ""}>${a.label}</button>`).join("") + `</div>`;
-        h += `<div class="hint">Suggested: ${ACTIONS.find((a) => a.k === rec).label}</div>`;
       }
       h += `</div>`;
     });
