@@ -45,3 +45,4 @@ summary{cursor:pointer;color:var(--accent)}
 del{color:var(--esc);background:var(--esc-bg);text-decoration:line-through}
 ins{color:var(--ok);background:var(--ok-bg);text-decoration:underline}
 .legend{margin-top:3px;font-size:10.5px;color:var(--muted)}
+.gap{color:var(--muted);padding:0 2px}

@@ -1,13 +1,14 @@
 # ContractGuard Word add-in (practice prototype)
 
-A "Review with ContractGuard" button in Word. It compares the open supplier contract with a simplified OMV standard, checks each change against 8 draft rules, and adds a Word comment to each change. Fixed rules only, no AI model. The contract never leaves the computer.
+A "Review with ContractGuard" button in Word. It compares a supplier's returned contract with OMV's standard template, checks each change against a draft rulebook, and adds a Word comment to each change with a suggestion: Accept, Reject or Escalate. Changes no rule covers are marked "You decide". The lawyer decides every change with buttons in the side panel. Fixed rules only, no AI model. The contract never leaves the computer.
 
-- `taskpane.html` / `taskpane.js`: the side panel (uses Office.js to read the document and add comments)
-- `rules.js`: the OMV standard text, the rulebook and the review logic
+- `template.js`: the contract template, word for word: OMV General Conditions of Purchase (Austrian law, January 2026), public version from [omv.com](https://www.omv.com/en/company/our-strength/supplier-center/general-conditions-of-purchase-at-omv)
+- `rules.js`: the rulebook (9 draft rules) and the review logic
+- `taskpane.html` / `taskpane.js` / `taskpane.css`: the side panel (uses Office.js to read the document, add comments and make tracked changes)
 - `manifest.xml`: tells Word the add-in's name, button and web address
-- `samples/`: supplier contracts to test with
+- `samples/`: `omv-template.docx` (the template), `supplier-example1.docx` (the task example: payment 60 → 30 days), `supplier-tough-round.docx` (10 realistic changes)
 - `INSTALL.md`: how to install it in Word
 
 Hosted with GitHub Pages at https://anabeldautovic.github.io/contractguard-addin/
 
-Practice data only: the OMV text paraphrases the public General Purchase Conditions (Nov 2025), and the rules are a draft, not approved by OMV Legal.
+Practice only: the template is OMV's public text, and the rulebook is a draft, not approved by OMV Legal.

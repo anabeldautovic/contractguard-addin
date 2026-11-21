@@ -1,91 +1,93 @@
-// ContractGuard review logic: read clauses, compare, check rules, decide.
+// ContractGuard review logic: read clauses, compare with the template, check the rulebook, decide.
 // Fixed rules only, no AI model. Draft rulebook, NOT approved by OMV Legal.
+//   template.js = the contract (what OMV and the supplier agree on)
+//   rules.js    = the rulebook (how OMV Legal reacts when a supplier changes it)
 (function (root) {
   "use strict";
 
-  const RULEBOOK_VERSION = "v0.1-draft (not approved by OMV Legal)";
+  const RULEBOOK_VERSION = "v0.2-draft (not approved by OMV Legal)";
 
-  // Practice text: simplified paraphrase of the public OMV General Purchase Conditions
-  // (Austrian law, Nov 2025). Not the real OMV template.
-  const OMV_STANDARD = [
-    ["1", "Scope", "These General Purchase Conditions apply to all purchases of goods and services by OMV from the Contractor."],
-    ["2", "Delivery and Acceptance", "The Contractor shall deliver on the agreed date. Risk passes to OMV only on acceptance at the agreed place of delivery."],
-    ["3", "Prices and Payment", "Prices are fixed. OMV shall pay within 60 days after receipt of a proper invoice. Payment is made in OMV's regular payment run."],
-    ["4", "Liability", "The Contractor is liable for all damage under the statutory provisions. The Contractor's liability is not limited or excluded."],
-    ["5", "Insurance", "The Contractor shall maintain insurance cover that is proportionate to the risks of the contract and provide proof on request."],
-    ["6", "Subcontracting", "The Contractor may use subcontractors only with OMV's prior written approval. For each breach the Contractor shall pay a contractual penalty of 1% of the contract price, up to a maximum of 5%."],
-    ["7", "Confidentiality", "The Contractor shall keep all information received from OMV confidential without time limit. The existence of this contract is also confidential."],
-    ["8", "Compliance", "The Contractor shall comply with the OMV Code of Conduct and all anti-corruption and sanctions laws, and shall keep related records for 5 years."],
-    ["9", "Amendments", "Amendments must be in writing and signed by both parties. Signature via DocuSign counts as written form. Email does not satisfy written form."],
-    ["10", "Governing Law and Jurisdiction", "Austrian law applies, excluding the UN Convention on Contracts for the International Sale of Goods (CISG). The courts of Vienna, Inner City, have exclusive jurisdiction."],
-  ].map(([num, head, body]) => ({ num, head, body }));
+  // ---------------- the template ----------------
+  const T = root.OMV_TEMPLATE;
+  const TEMPLATE_NAME = T.name;
+  const OMV_STANDARD = T.clauses.map((c) => ({ num: c.num, head: c.head, paras: c.paras, body: c.paras.join(" ").replace(/\s+/g, " ").trim() }));
 
-  // ---------------- rulebook ----------------
+  // ---------------- the rulebook ----------------
+  // Each rule covers one clause (found by words in its heading) and checks one point.
+  // "scope" says which sentences the rule is about: if anything outside that changed too,
+  // ContractGuard says so and never accepts on its own.
+  // A rule answers: ok (accept), counter (reject: put OMV wording back), route / esc (escalate),
+  // or same (its point is unchanged).
+  const num = (t, re) => { const m = t.match(re); return m ? +m[1] : null; };
+  const yrs = (n) => (n === 1 ? "1 year" : Number.isInteger(n) ? `${n} years` : `${Math.round(n * 12)} months`);
+  const SRC = (n) => `OMV GPC Jan 2026, clause ${n}`;
   const RULES = [
-    { id: "R-PAY-01", keys: ["payment", "prices"], standard: "OMV pays 60 days after a proper invoice, in the automated payment run.",
-      source: "GPC Nov 2025, payment terms; Annual Report 2025",
+    { id: "R-PAY-01", keys: ["payment"], scope: /\bdays?\b/i, standard: "OMV pays 60 days after receiving a proper invoice.", source: SRC("6.4"),
       test(t) {
-        const m = t.match(/(\d+)\s*(?:calendar\s+)?days/i);
-        if (!m) return { a: "esc", why: "Couldn't find a payment period in days. A lawyer should read this clause." };
-        const d = +m[1];
+        const d = num(t, /(\d+)\)?\s*(?:calendar\s+)?days\s+(?:from|after)\s+(?:the\s+)?receipt/i);
+        if (d === null) return { a: "counter", why: "Couldn't find the 60-day payment period any more. Put OMV's wording back, or read the clause." };
         if (d < 60) return { a: "route", to: "Finance / Procurement", why: `Payment period is ${d} days instead of 60. Paying ${60 - d} days earlier costs OMV working capital, so this is a money decision for Finance or Procurement, not a legal one.` };
         if (d > 60) return { a: "ok", why: `Payment period is ${d} days, longer than the standard 60. This favours OMV.` };
-        return { a: "ok", why: "Still 60 days." };
+        return { a: "same", why: "The payment period is still 60 days." };
       } },
-    { id: "R-LIA-01", keys: ["liability"], standard: "The Contractor's liability is not limited or excluded.", source: "GPC Nov 2025, liability",
+    { id: "R-WAR-01", keys: ["warranty"], scope: /warranty period|\byears?\b|\bmonths?\b/i, standard: "Warranty of 2 years for movables, 3 years for immovables.", source: SRC("7.2"),
       test(t) {
-        const rest = t.replace(/not limited or excluded/i, "");
-        const cap = /(shall not exceed|limited to|\bcap(ped)?\b|maximum (total )?liability|in no event|exclud\w* .*liabilit|not be liable)/i.test(rest);
-        if (cap || !/not limited or excluded/i.test(t)) return { a: "esc", to: "Senior lawyer", why: "The supplier limits or excludes its liability. OMV's standard has no cap, so a senior lawyer decides." };
-        return { a: "ok", why: "Liability is still unlimited." };
+        const toY = (m) => (m ? (/month/i.test(m[2]) ? +m[1] / 12 : +m[1]) : null);
+        const mov = toY(t.match(/(\d+)\)?\s*(years?|months?)\s+for movables/i)), imm = toY(t.match(/(\d+)\)?\s*(years?|months?)\s+for immovables/i));
+        if (mov === null || imm === null) return { a: "counter", why: "The warranty periods are gone or reworded. Put OMV's periods back (2 years movables, 3 years immovables)." };
+        if (mov < 2 || imm < 3) return { a: "counter", why: `The supplier shortens the warranty to ${yrs(mov)} for movables and ${yrs(imm)} for immovables. OMV's standard is 2 and 3 years. Reject to put OMV's periods back.` };
+        if (mov > 2 || imm > 3) return { a: "ok", why: "The warranty is longer than OMV's standard. This favours OMV." };
+        return { a: "same", why: "Warranty periods are unchanged." };
       } },
-    { id: "R-INS-01", keys: ["insurance"], standard: "Insurance proportionate to the contract's risks, proof on request.", source: "GPC Nov 2025, insurance",
+    { id: "R-INS-01", keys: ["insurance"], scope: /./, standard: "Liability insurance proportionate to price and risk, with proof before work starts.", source: SRC("11"),
       test(t) {
-        if (/proportionate/i.test(t) && /proof/i.test(t)) return { a: "ok", why: "Still requires proportionate insurance with proof on request." };
-        return { a: "esc", why: "The insurance duty was weakened or reworded. A lawyer should check it." };
+        if (/proportionate/i.test(t) && /proofs? of (such )?insurance/i.test(t)) return { a: "same", why: "Still requires proportionate insurance with proof." };
+        return { a: "counter", why: "The insurance duty was weakened. Reject to put OMV's wording back." };
       } },
-    { id: "R-SUB-01", keys: ["subcontract"], standard: "Subcontractors only with prior written approval; penalty 1% per breach, max 5%.", source: "GPC Nov 2025, subcontracting",
-      test(t) {
-        if (/prior written approval/i.test(t) && /\b1\s?%/.test(t) && /\b5\s?%/.test(t)) return { a: "ok", why: "Approval duty and penalty are unchanged." };
-        return { a: "counter", why: "The approval duty or the penalty was changed. Propose OMV's standard wording back." };
+    { id: "R-LIA-01", keys: ["liability"], scope: /./, standard: "The Contractor is liable for all damage; no cap and no exclusions.", source: SRC("8"),
+      test(t, omv) {
+        const CAP = /(shall not exceed|limited to|\bcap(ped)?\b|maximum (aggregate |total )?liability|in no event|not be liable|exclud\w*[^.]*(liabilit|damage)|indirect|consequential)/i;
+        if (CAP.test(t) && !CAP.test(omv)) return { a: "esc", to: "Senior lawyer", why: "The supplier caps or excludes its liability. OMV's standard has no cap, so a senior lawyer decides." };
+        if (!/liable for any damages/i.test(t)) return { a: "esc", to: "Senior lawyer", why: "The basic liability sentence was changed. A senior lawyer decides." };
+        return { a: "same", why: "Liability is still unlimited." };
       } },
-    { id: "R-CONF-01", keys: ["confidential"], standard: "Confidential without time limit; the contract's existence is also confidential.", source: "GPC Nov 2025, confidentiality",
-      test(t) {
-        const m = t.match(/(\d+)\s*(years?|months?)/i);
-        if (m) return { a: "counter", why: `The supplier wants confidentiality to end after ${m[1]} ${m[2]}. OMV's standard has no end date. Propose 'without time limit'; escalate if they insist.` };
-        if (/\buntil\b/i.test(t) || !/without time limit/i.test(t)) return { a: "counter", why: "The 'without time limit' wording is gone. Propose it back." };
-        if (!/existence/i.test(t)) return { a: "counter", why: "The sentence making the contract's existence confidential was removed." };
-        return { a: "ok", why: "Still confidential without time limit." };
+    { id: "R-CONF-01", keys: ["confidential"], scope: /./, standard: "Confidential with no end date; disclosing the contract needs OMV's consent; survives termination.", source: SRC("14"),
+      test(t, omv) {
+        const P = /(\d+)\)?\s*(years?|months?)/i, m = t.match(P);
+        if (m && !P.test(omv)) return { a: "counter", why: `The supplier wants confidentiality to end after ${m[1]} ${m[2]}. OMV's standard has no end date. Reject to put OMV's wording back; escalate if they insist.` };
+        if (!/shall survive/i.test(t)) return { a: "counter", why: "Confidentiality would no longer survive the end of the contract. Reject to put OMV's wording back." };
+        if (!/existence, content or progress/i.test(t)) return { a: "counter", why: "The supplier could now talk about the contract without OMV's consent. Reject to put OMV's wording back." };
+        return { a: "same", why: "Confidentiality still has no end date." };
       } },
-    { id: "R-COMP-01", keys: ["compliance"], standard: "Code of Conduct, anti-corruption, sanctions; records kept 5 years.", source: "GPC Nov 2025, Code of Conduct / sanctions",
+    { id: "R-COMP-01", keys: ["code of conduct", "sanctions"], scope: /./, standard: "Code of Conduct and sanctions duties: every change goes to Compliance.", source: SRC("16-17"),
+      test() { return { a: "esc", to: "Compliance", why: "The supplier changed a Code of Conduct or sanctions duty. Compliance must look at every change here." }; } },
+    { id: "R-LAW-01", keys: ["applicable law"], scope: /./, standard: "Austrian law, UN sales convention (CISG) excluded.", source: SRC("19"),
       test(t) {
-        const y = t.match(/(\d+)\s*years/i);
-        if (/code of conduct/i.test(t) && /corruption/i.test(t) && /sanction/i.test(t) && y && +y[1] >= 5) return { a: "ok", why: "All compliance duties still in place." };
-        return { a: "esc", to: "Compliance", why: "A compliance duty was removed or shortened. Compliance must look at this." };
+        if (/law of austria|austrian law/i.test(t) && /(convention on contracts for the inter-?national sales? of goods|cisg)[^.]*excluded/i.test(t)) return { a: "same", why: "Still Austrian law, CISG excluded." };
+        return { a: "esc", to: "Senior lawyer", why: "The supplier changed the governing law. This needs a senior lawyer." };
       } },
-    { id: "R-AMD-01", keys: ["amendment"], standard: "Amendments only in signed writing (DocuSign counts). Email does not count.", source: "GPC Nov 2025, amendments",
+    { id: "R-JUR-01", keys: ["jurisdiction"], scope: /./, standard: "Exclusive jurisdiction of the court for Vienna, Inner City.", source: SRC("20"),
       test(t) {
-        const emailOk = /e-?mail/i.test(t) && !/e-?mail does not|not .*e-?mail|e-?mail .*(not|insufficient)/i.test(t);
-        if (emailOk) return { a: "counter", why: "The supplier wants email to count as a written amendment. Under OMV's standard only signed writing counts. Propose the standard wording back." };
-        if (!/signed/i.test(t)) return { a: "counter", why: "The signature requirement was removed." };
-        return { a: "ok", why: "Signed writing is still required." };
+        if (/vienna/i.test(t) && /exclusive jurisdiction/i.test(t)) return { a: "same", why: "Still the Vienna court, exclusively." };
+        return { a: "esc", to: "Senior lawyer", why: "The supplier changed the court for disputes. This needs a senior lawyer." };
       } },
-    { id: "R-LAW-01", keys: ["governing law", "jurisdiction"], standard: "Austrian law, CISG excluded, courts of Vienna Inner City.", source: "GPC Nov 2025, governing law",
+    { id: "R-AMD-01", keys: ["amendment"], scope: /./, standard: "Amendments only in signed writing (DocuSign counts). Plain e-mail does not count.", source: SRC("22"),
       test(t) {
-        if (/austrian law/i.test(t) && /cisg/i.test(t) && /vienna/i.test(t)) return { a: "ok", why: "Still Austrian law, CISG excluded, Vienna courts." };
-        return { a: "esc", to: "Senior lawyer", why: "Governing law or court was changed. This needs a senior lawyer." };
+        const emailOk = /e-?mail/i.test(t) && !/e-?mail[^.]*(shall not|does not|do not|not satisfy|insufficient)/i.test(t);
+        if (emailOk) return { a: "counter", why: "The supplier wants plain e-mail to count as a written amendment. Under OMV's standard only signed writing counts. Reject to put OMV's wording back." };
+        if (!/signed/i.test(t)) return { a: "counter", why: "The signature requirement was removed. Reject to put OMV's wording back." };
+        return { a: "same", why: "Signed writing is still required." };
       } },
   ];
+
   // What ContractGuard suggests. Same words as the buttons in the panel.
-  // Rules answer ok / counter / route / esc; these map onto the lawyer's three buttons,
-  // plus "review" when no approved rule covers the change (ContractGuard makes no suggestion).
+  // "review" = no approved rule covers the change, so ContractGuard makes no suggestion.
   const LABEL = { escalate: "Escalate", reject: "Reject", review: "You decide", accept: "Accept" };
-  const ORDER = { escalate: 0, reject: 1, review: 2, accept: 3 };
   const FROM_RULE = { ok: "accept", counter: "reject", route: "escalate", esc: "escalate" };
   const findRule = (head) => { const h = head.toLowerCase(); return RULES.find((r) => r.keys.some((k) => h.includes(k))); };
 
   // ---------------- 1. read ----------------
-  // paras: [{text, isHeading}] in document order. Returns clauses with paragraph indexes.
+  // paras: [{text, isHeading}] in document order. Returns clauses with paragraph indexes and texts.
   const HEAD_RE = /^\s*(\d+)\.?\s+(.{1,70}?)\s*$/;
   function splitClauses(paras) {
     const out = []; let cur = null, auto = 0;
@@ -96,10 +98,11 @@
       const styledHeading = p.isHeading && !p.isTitle && text && text.length < 80;
       if (looksLikeHeading || styledHeading) {
         auto++;
-        cur = { num: m ? m[1] : String(auto), head: m ? m[2] : text, headIdx: i, bodyIdx: [], body: "" };
+        cur = { num: m ? m[1] : String(auto), head: m ? m[2] : text, headIdx: i, bodyIdx: [], paras: [], body: "" };
         out.push(cur);
       } else if (cur && text) {
         cur.bodyIdx.push(i);
+        cur.paras.push(text);
         cur.body += (cur.body ? " " : "") + text;
       }
     });
@@ -120,9 +123,10 @@
     cp.forEach((c, j) => { if (!used.has(j)) pairs.push({ b: null, c }); });
     return pairs;
   }
-  // Word-level diff. Returns a list of {t: "=", "-" or "+", w: word}.
-  function diffWords(a, b) {
-    const A = a.split(/\s+/).filter(Boolean), B = b.split(/\s+/).filter(Boolean), n = A.length, m = B.length;
+  // Difference between two lists (of words or paragraphs). Returns [{t: "=", "-" or "+", w: item}].
+  function diffWords(a, b) { return diffSeq(a.split(/\s+/).filter(Boolean), b.split(/\s+/).filter(Boolean)); }
+  function diffSeq(A, B) {
+    const n = A.length, m = B.length;
     const L = Array.from({ length: n + 1 }, () => new Int32Array(m + 1));
     for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) L[i][j] = A[i] === B[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
     const ops = []; let i = 0, j = 0;
@@ -145,9 +149,15 @@
   }
   // Only the sentences that differ, so a comment shows full sentences instead of word fragments.
   const sentences = (t) => t.split(/(?<=[.!?])\s+(?=[A-Z0-9"“(])/).map((x) => x.trim()).filter(Boolean);
+  // a and b are lists of paragraphs; each paragraph is split into sentences on its own.
+  const allSentences = (paras) => paras.flatMap(sentences);
+  function sentenceDiff(a, b) {
+    const A = allSentences(a), B = allSentences(b), sa = new Set(A), sb = new Set(B);
+    return { omv: A.filter((x) => !sb.has(x)), supplier: B.filter((x) => !sa.has(x)) };
+  }
   function changedSentences(a, b) {
-    const A = sentences(a), B = sentences(b), sa = new Set(A), sb = new Set(B);
-    return { omv: A.filter((x) => !sb.has(x)).join(" "), supplier: B.filter((x) => !sa.has(x)).join(" ") };
+    const d = sentenceDiff(a, b);
+    return { omv: d.omv.join(" "), supplier: d.supplier.join(" ") };
   }
 
   // ---------------- 3-5. check + decide ----------------
@@ -163,10 +173,22 @@
       else if (norm(b.body) === norm(c.body)) { f.a = "accept"; f.cosmetic = true; f.why = "Only punctuation, capitals or spacing changed. No change in meaning, so ContractGuard accepted it."; }
       else if (!rule) { f.a = "review"; f.why = "This clause changed, but no approved rule covers it. ContractGuard doesn't guess, so you decide."; }
       else {
-        const r = rule.test(c.body);
+        const r = rule.test(c.body, b.body);
+        // Did anything change outside what this rule looks at?
+        const d = sentenceDiff(b.paras, c.paras);
+        const extra = d.omv.concat(d.supplier).some((x) => !rule.scope.test(x));
         f.to = r.to || null;
-        f.a = r.a === "esc" && !f.to ? "review" : FROM_RULE[r.a];
-        f.why = r.why;
+        if (r.a === "same") {
+          f.a = "review";
+          f.why = `Rule ${rule.id} checks one point and it is unchanged (${r.why.replace(/\.$/, "")}). But other wording in this clause changed, and no rule covers that, so you decide.`;
+        } else {
+          f.a = r.a === "esc" && !f.to ? "review" : FROM_RULE[r.a];
+          f.why = r.why;
+          if (extra) {
+            if (f.a === "accept") f.a = "review";
+            f.why += " Other wording in this clause changed too, which no rule covers. Check “Show the change”.";
+          }
+        }
       }
       if (b && c) f.changes = wordChanges(b.body, c.body);
       findings.push(f);
@@ -184,20 +206,30 @@
 
   const TAG = "ContractGuard ·";
   const isOurs = (text) => /^(ContractGuard ·|\[ContractGuard\])/.test(text || "");
-  const suggestion = (f) => f.a === "review" ? "You decide" : LABEL[f.a] + (f.a === "escalate" ? ` to ${f.to || "Senior lawyer"}` : "");
-  function commentText(f) {
-    const lines = [`${TAG} ${f.cosmetic ? "Accepted: wording only" : (f.a === "review" ? "No rule: you decide" : "Suggest: " + suggestion(f))}`, f.why];
+  const suggestion = (f) => LABEL[f.a];
+  // The comment as pieces with formatting: [{t: text, b: bold, i: italic}]. A line break starts a new line.
+  // Word gets the formatting; commentText() gives the same comment as plain text.
+  function commentParts(f) {
+    const P = [];
+    const add = (t, o = {}) => P.push({ t, b: !!o.b, i: !!o.i });
+    const head = f.cosmetic ? "Accepted: wording only" : f.a === "review" ? "No rule: you decide" : "Suggest: " + suggestion(f);
+    const NL = "\n";
+    add(`${TAG} ${head}`, { b: true });
+    add(NL + f.why);
+    const q = (t) => `“${t}”`;
     if (!f.cosmetic) {
-      if (f.b && f.c) {
-        const d = changedSentences(f.b.body, f.c.body);
-        lines.push("", "OMV: " + (d.omv || "(nothing)"), "Supplier: " + (d.supplier || "(deleted)"));
-      } else if (!f.c) lines.push("", `OMV clause ${f.b.num} (${f.head}): ${f.b.body}`, "Supplier: (whole clause deleted)");
-      else lines.push("", "OMV: (no such clause)", "Supplier: " + f.c.body);
+      let omv, sup;
+      if (f.b && f.c) { const d = changedSentences(f.b.paras, f.c.paras); omv = d.omv ? q(d.omv) : "(not in OMV's text: the supplier added this)"; sup = d.supplier ? q(d.supplier) : "(deleted by the supplier)"; }
+      else if (!f.c) { omv = q(f.b.body); sup = "(whole clause deleted)"; }
+      else { omv = "(no such clause)"; sup = q(f.c.body); }
+      add(NL + NL + "OMV: ", { b: true }); add(omv, { i: true });
+      add(NL + "Supplier: ", { b: true }); add(sup, { i: true });
     }
-    if (f.b && f.c && f.b.num !== f.c.num) lines.push(`Note: OMV clause ${f.b.num} is clause ${f.c.num} here.`);
-    if (f.rule && !f.cosmetic && f.a !== "review") lines.push("", `Rule ${f.rule.id} · ${f.rule.source}`);
-    return lines.join("\n");
+    if (f.b && f.c && f.b.num !== f.c.num) add(`${NL}${NL}Note: OMV clause ${f.b.num} is clause ${f.c.num} here.`);
+    if (f.rule && !f.cosmetic && f.a !== "review") add(`${NL}${NL}Rule ${f.rule.id} · ${f.rule.source}`, { i: true });
+    return P;
   }
+  const commentText = (f) => commentParts(f).map((p) => p.t).join("");
 
-  root.ContractGuard = { RULEBOOK_VERSION, OMV_STANDARD, RULES, LABEL, TAG, isOurs, suggestion, splitClauses, review, commentText, diffWords };
+  root.ContractGuard = { RULEBOOK_VERSION, TEMPLATE_NAME, OMV_STANDARD, diffSeq, RULES, LABEL, TAG, isOurs, suggestion, splitClauses, review, commentText, commentParts, diffWords };
 })(typeof window !== "undefined" ? window : globalThis);

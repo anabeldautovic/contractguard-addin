@@ -120,13 +120,28 @@
         const next = f.c ? null : CG.OMV_STANDARD.slice(CG.OMV_STANDARD.indexOf(f.b) + 1).map((x) => locate(cp, x)).find(Boolean);
         const range = f.c ? clauseRange(paras, f.c) : next ? paras.items[next.headIdx].getRange("Whole") : paras.items[0].getRange("Whole");
         if (f.c) searches.push(...findAdded(paras, f.c, f));
-        const cm = range.insertComment(CG.commentText(f));
+        const parts = CG.commentParts(f);
+        const cm = range.insertComment(parts[0].t);
         if (f.cosmetic) cm.resolved = true; // wording-only changes are accepted automatically
         cm.load("id");
-        comments.push(cm);
+        comments.push({ cm, parts });
       }
       await ctx.sync();
-      R.findings.forEach((f, i) => (f.commentId = comments[i].id));
+      R.findings.forEach((f, i) => (f.commentId = comments[i].cm.id));
+
+      // Fill in the rest of each comment with bold and italic parts.
+      try {
+        for (const { cm, parts } of comments) {
+          cm.contentRange.bold = parts[0].b; cm.contentRange.italic = parts[0].i;
+          for (const p of parts.slice(1)) { const r = cm.contentRange.insertText(p.t, "End"); r.bold = p.b; r.italic = p.i; }
+        }
+        await ctx.sync();
+      } catch (e) {
+        // This Word can't format comments: use plain text instead.
+        console.warn("Comment formatting not supported, using plain text.", e);
+        comments.forEach(({ cm, parts }) => (cm.content = parts.map((p) => p.t).join("")));
+        await ctx.sync();
+      }
       searches.forEach((res) => { if (res.items.length) res.items[0].font.highlightColor = "Yellow"; });
       await ctx.sync();
 
@@ -163,41 +178,46 @@
       else if (k === "reject") {
         ctx.document.changeTrackingMode = Word.ChangeTrackingMode.trackAll;
         if (cm) { reply = cm.reply("✖ Rejected. OMV standard wording put back (tracked change)."); cm.resolved = true; }
+        const isSubhead = (t) => /^\d+(\.\d+)+ /.test(t) && !/[.;:]$/.test(t);
         if (f.b && c) {
-          // Changed clause: replace the supplier's text with OMV's.
-          if (c.bodyIdx.length) {
-            const first = paras.items[c.bodyIdx[0]];
-            first.insertText(f.b.body, "Replace");
-            first.getRange("Whole").font.highlightColor = null;
-            c.bodyIdx.slice(1).forEach((idx) => paras.items[idx].delete());
-          } else {
-            paras.items[c.headIdx].insertParagraph(f.b.body, "After").styleBuiltIn = Word.Style.normal;
+          // Changed clause: go paragraph by paragraph and put back only what differs from OMV's text.
+          const ops = CG.diffSeq(f.b.paras, c.paras);
+          let j = 0, last = paras.items[c.headIdx], rem = [], add = [];
+          const flush = () => {
+            const k = Math.min(rem.length, add.length);
+            for (let x = 0; x < k; x++) { add[x].insertText(rem[x], "Replace"); add[x].getRange("Whole").font.highlightColor = null; last = add[x]; }
+            add.slice(k).forEach((p) => p.delete());
+            for (const t of rem.slice(k)) {
+              last = last.insertParagraph(t, "After");
+              last.styleBuiltIn = Word.Style.normal;
+              if (isSubhead(t)) last.font.bold = true;
+            }
+            rem = []; add = [];
+          };
+          for (const o of ops) {
+            if (o.t === "=") { flush(); last = paras.items[c.bodyIdx[j++]]; }
+            else if (o.t === "-") rem.push(o.w);
+            else add.push(paras.items[c.bodyIdx[j++]]);
           }
+          flush();
         } else if (!f.b && c) {
           // Clause the supplier added: take it out.
           clauseRange(paras, c).delete();
         } else if (f.b && !c) {
           // Clause the supplier deleted: put it back before the next OMV clause that is still there.
-          const pos = CG.OMV_STANDARD.findIndex((s) => s.num === f.b.num);
-          let next = null;
-          for (const s of CG.OMV_STANDARD.slice(pos + 1)) { next = locate(cp, s); if (next) break; }
-          if (next) {
-            const before = paras.items[next.headIdx];
-            before.insertParagraph(`${f.b.num}. ${f.b.head}`, "Before");
-            before.insertParagraph(f.b.body, "Before").styleBuiltIn = Word.Style.normal;
-          } else {
-            ctx.document.body.insertParagraph(`${f.b.num}. ${f.b.head}`, "End");
-            ctx.document.body.insertParagraph(f.b.body, "End").styleBuiltIn = Word.Style.normal;
-          }
+          const pos = CG.OMV_STANDARD.indexOf(f.b);
+          const next = CG.OMV_STANDARD.slice(pos + 1).map((s) => locate(cp, s)).find(Boolean);
+          const put = (t) => next ? paras.items[next.headIdx].insertParagraph(t, "Before") : ctx.document.body.insertParagraph(t, "End");
+          put(`${f.b.num} ${f.b.head}`).styleBuiltIn = Word.Style.heading1;
+          f.b.paras.forEach((t) => { const p = put(t); p.styleBuiltIn = Word.Style.normal; if (isSubhead(t)) p.font.bold = true; });
         }
         text = f.b ? "Rejected. OMV standard wording put back." : "Rejected. Supplier's new clause removed.";
         text += " Shown as a tracked change.";
       }
 
       else if (k === "escalate") {
-        const who = f.to || "Senior lawyer";
-        if (cm) reply = cm.reply(`⚑ Escalated to ${who}.`);
-        text = `Escalated to ${who}. The comment stays open.`;
+        if (cm) reply = cm.reply("⚑ Escalated.");
+        text = "Escalated. The comment stays open.";
       }
 
       if (reply) reply.load("id");
@@ -262,7 +282,21 @@
   function diffHtml(f) {
     if (!f.b) return `<ins>${esc(f.c.body)}</ins>`;
     if (!f.c) return `<del>${esc(f.b.body)}</del>`;
-    return CG.diffWords(f.b.body, f.c.body).map((o) => o.t === "=" ? esc(o.w) : o.t === "-" ? `<del>${esc(o.w)}</del>` : `<ins>${esc(o.w)}</ins>`).join(" ").replace(/<\/del> <del>/g, " ").replace(/<\/ins> <ins>/g, " ");
+    // Long unchanged stretches are shortened to "…" so the change stands out.
+    const ops = CG.diffWords(f.b.body, f.c.body), KEEP = 12, out = [];
+    let run = [];
+    const flushRun = (atStart, atEnd) => {
+      if (run.length > 2 * KEEP) out.push(...(atStart ? [] : run.slice(0, KEEP)), "<span class=\"gap\">…</span>", ...(atEnd ? [] : run.slice(-KEEP)));
+      else out.push(...run);
+      run = [];
+    };
+    ops.forEach((o) => {
+      if (o.t === "=") { run.push(esc(o.w)); return; }
+      flushRun(out.length === 0, false);
+      out.push(o.t === "-" ? `<del>${esc(o.w)}</del>` : `<ins>${esc(o.w)}</ins>`);
+    });
+    flushRun(out.length === 0, true);
+    return out.join(" ").replace(/<\/del> <del>/g, " ").replace(/<\/ins> <ins>/g, " ");
   }
 
   function showResult() {

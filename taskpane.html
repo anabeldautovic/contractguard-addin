@@ -8,7 +8,7 @@
 </head>
 <body>
   <h1>ContractGuard</h1>
-  <p class="sub">Checks the open contract against the OMV standard and adds a comment to each change. You decide every change.</p>
+  <p class="sub">Compares the supplier’s version with OMV’s General Conditions of Purchase, suggests what to do with each change, and adds a comment to it. You decide every change.</p>
 
   <button class="btn" id="run" disabled>Run review</button>
   <button class="btn secondary" id="clear" disabled>Remove ContractGuard comments</button>
@@ -16,8 +16,8 @@
   <div id="result"></div>
 
   <div class="foot">
-    Practice version. Compares with a simplified OMV standard based on the public General Purchase Conditions (Nov 2025), using 8 draft rules not approved by OMV Legal. No AI model. The contract never leaves your computer.<br><br>
-    Panel version 6.<br><br>No contract to test with? <a href="samples/supplier-tough-round.docx" target="_blank" rel="noopener">Download a sample supplier version</a>.
+    Practice version. Template: OMV General Conditions of Purchase (Austrian law, January 2026), the public version from omv.com. Rulebook: 9 draft rules, not approved by OMV Legal. No AI model. The contract never leaves your computer.<br><br>
+    Panel version 7.<br><br>Test files: <a href="samples/supplier-example1.docx" target="_blank" rel="noopener">task example (60 → 30 days)</a> · <a href="samples/supplier-tough-round.docx" target="_blank" rel="noopener">tough round (10 changes)</a> · <a href="samples/omv-template.docx" target="_blank" rel="noopener">OMV template</a>.
   </div>
 
 <script>
@@ -32,7 +32,7 @@
       s.src = src + "?v=" + v; s.onload = next;
       document.body.appendChild(s);
     }
-    load("rules.js", function () { load("taskpane.js"); });
+    load("template.js", function () { load("rules.js", function () { load("taskpane.js"); }); });
   })();
 </script>
 </body>
