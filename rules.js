@@ -164,7 +164,7 @@
     if (f.b && f.c && f.b.num !== f.c.num) lines.push(`Renumbered: OMV clause ${f.b.num} is clause ${f.c.num} here.`);
     lines.push("Why: " + f.why);
     if (f.rule && !f.cosmetic) lines.push(`Rule ${f.rule.id}. OMV standard: ${f.rule.standard} Source: ${f.rule.source}.`);
-    if (f.a !== "ok") lines.push("Your decision: Accept / Reject / Edit / Escalate");
+    lines.push("Decide with the buttons in the ContractGuard panel.");
     return lines.join("\n");
   }
 
