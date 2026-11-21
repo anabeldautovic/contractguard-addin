@@ -37,8 +37,17 @@
     return n * (u.startsWith("week") ? 7 : u.startsWith("month") ? 30 : u.startsWith("year") ? 365 : 1);
   }
 
+  // Two kinds of rules:
+  //  - HARD CHECKS (kind "hard"): coded, for the few critical points with numbers or exact facts.
+  //  - PLAYBOOK entries (kind "playbook"): one plain-language sentence the lawyers write and edit.
+  //    Any change to that topic gets the playbook's suggestion; the sentence is shown as the reason.
+  // "trigger" finds the topic by meaning in OTHER clauses too (e.g. a liability cap hidden in the
+  // insurance clause). In this prototype that uses key phrases; at OMV a local model would do it.
+  const CAP = /(shall not exceed|limited to|\bcap(ped)?\b|maximum (aggregate |total )?liability|in no event|not be liable|exclud\w*[^.]*(liabilit|damage)|indirect|consequential)/i;
+  const playbook = (o) => ({ ...o, kind: "playbook", scope: /./, test: () => ({ a: o.suggest, to: o.to, why: `Playbook: ${o.text}` }) });
+
   const RULES = [
-    { id: "R-PAY-01", keys: ["payment"], scope: /\b(days?|weeks?|months?)\b/i, standard: "OMV pays 60 days after receiving a proper invoice.", source: SRC("6.4"),
+    { id: "R-PAY-01", kind: "hard", keys: ["payment"], scope: /\b(days?|weeks?|months?)\b/i, standard: "OMV pays 60 days after receiving a proper invoice.", source: SRC("6.4"),
       test(t) {
         const d = period(t, "(?:from|after)\\s+(?:the\\s+)?receipt", "days");
         if (d === null) return { a: "counter", why: "Couldn't find the 60-day payment period any more. Put OMV's wording back, or read the clause." };
@@ -46,7 +55,7 @@
         if (d > 60) return { a: "ok", why: `Payment period is ${d} days, longer than the standard 60. This favours OMV.` };
         return { a: "same", why: "The payment period is still 60 days." };
       } },
-    { id: "R-WAR-01", keys: ["warranty"], scope: /warranty period|\byears?\b|\bmonths?\b/i, standard: "Warranty of 2 years for movables, 3 years for immovables.", source: SRC("7.2"),
+    { id: "R-WAR-01", kind: "hard", keys: ["warranty"], scope: /warranty period|\byears?\b|\bmonths?\b/i, standard: "Warranty of 2 years for movables, 3 years for immovables.", source: SRC("7.2"),
       test(t) {
         const mov = period(t, "for\\s+movables", "years"), imm = period(t, "for\\s+immovables", "years");
         if (mov === null || imm === null) return { a: "counter", why: "The warranty periods are gone or reworded. Put OMV's periods back (2 years movables, 3 years immovables)." };
@@ -54,59 +63,45 @@
         if (mov > 2 || imm > 3) return { a: "ok", why: "The warranty is longer than OMV's standard. This favours OMV." };
         return { a: "same", why: "Warranty periods are unchanged." };
       } },
-    { id: "R-INS-01", keys: ["insurance"], scope: /./, standard: "Liability insurance proportionate to price and risk, with proof before work starts.", source: SRC("11"),
-      test(t) {
-        if (/proportionate/i.test(t) && /proofs? of (such )?insurance/i.test(t)) return { a: "same", why: "Still requires proportionate insurance with proof." };
-        return { a: "counter", why: "The insurance duty was weakened. Reject to put OMV's wording back." };
-      } },
-    { id: "R-LIA-01", keys: ["liability"], scope: /./, standard: "The Contractor is liable for all damage; no cap and no exclusions.", source: SRC("8"),
+    playbook({ id: "P-INS-01", keys: ["insurance"], topic: "insurance", standard: "Liability insurance proportionate to price and risk, with proof before work starts.", source: SRC("11"), suggest: "counter",
+      text: "The supplier keeps liability insurance that fits the price and the risk, and shows proof before starting. If the supplier changes this: Reject." }),
+    { id: "R-LIA-01", kind: "hard", keys: ["liability"], topic: "liability", scope: /./, standard: "The Contractor is liable for all damage; no cap and no exclusions.", source: SRC("8"),
+      trigger: /liabilit\w*[^.]*(shall not exceed|limited to|\bcap(ped)?\b|maximum|in no event|exclud)|not be liable|(shall not exceed|in no event)[^.]*liabilit/i, crossA: "esc", crossTo: "Senior lawyer", crossWhy: "OMV’s standard has no cap or exclusion of liability, wherever it is written.",
       test(t, omv) {
-        const CAP = /(shall not exceed|limited to|\bcap(ped)?\b|maximum (aggregate |total )?liability|in no event|not be liable|exclud\w*[^.]*(liabilit|damage)|indirect|consequential)/i;
         if (CAP.test(t) && !CAP.test(omv)) return { a: "esc", to: "Senior lawyer", why: "The supplier caps or excludes its liability. OMV's standard has no cap." };
         if (!/liable for any damages/i.test(t)) return { a: "esc", to: "Senior lawyer", why: "The basic liability sentence was changed." };
         return { a: "same", why: "Liability is still unlimited." };
       } },
-    { id: "R-CONF-01", keys: ["confidential"], scope: /./, standard: "Confidential with no end date; disclosing the contract needs OMV's consent; survives termination.", source: SRC("14"),
-      test(t, omv) {
-        const P = /(\d+)\)?\s*(years?|months?)/i, m = t.match(P);
-        if (m && !P.test(omv)) return { a: "counter", why: `The supplier wants confidentiality to end after ${m[1]} ${m[2]}. OMV's standard has no end date. Reject to put OMV's wording back; escalate if they insist.` };
-        if (!/shall survive/i.test(t)) return { a: "counter", why: "Confidentiality would no longer survive the end of the contract. Reject to put OMV's wording back." };
-        if (!/existence, content or progress/i.test(t)) return { a: "counter", why: "The supplier could now talk about the contract without OMV's consent. Reject to put OMV's wording back." };
-        return { a: "same", why: "Confidentiality still has no end date." };
-      } },
-    { id: "R-COMP-01", keys: ["code of conduct", "sanctions"], scope: /./, standard: "Code of Conduct and sanctions duties stay as they are.", source: SRC("16-17"),
-      test() { return { a: "esc", to: "Compliance", why: "The supplier changed a Code of Conduct or sanctions duty. Every change here is escalated." }; } },
-    { id: "R-LAW-01", keys: ["applicable law"], scope: /./, standard: "Austrian law, UN sales convention (CISG) excluded.", source: SRC("19"),
+    playbook({ id: "P-CONF-01", keys: ["confidential"], topic: "confidentiality", standard: "Confidential with no end date; disclosing the contract needs OMV's consent; survives termination.", source: SRC("14"), suggest: "counter",
+      text: "Everything OMV shares stays confidential with no end date, and the contract may only be mentioned with OMV’s consent. If the supplier changes this: Reject; escalate if they insist.",
+      trigger: /confidential[^.]*\b(\d+\)?\s*(years?|months?)|until|expire)/i, crossA: "counter", crossWhy: "Confidentiality has no end date in OMV’s standard." }),
+    playbook({ id: "P-COMP-01", keys: ["code of conduct", "sanctions"], topic: "Code of Conduct and sanctions", standard: "Code of Conduct and sanctions duties stay as they are.", source: SRC("16-17"), suggest: "esc", to: "Compliance",
+      text: "OMV’s Code of Conduct and sanctions duties are not negotiated by the reviewing lawyer. Any change: Escalate to Compliance." }),
+    { id: "R-LAW-01", kind: "hard", keys: ["applicable law"], scope: /./, standard: "Austrian law, UN sales convention (CISG) excluded.", source: SRC("19"),
       test(t) {
         if (/law of austria|austrian law/i.test(t) && /(convention on contracts for the inter-?national sales? of goods|cisg)[^.]*excluded/i.test(t)) return { a: "same", why: "Still Austrian law, CISG excluded." };
         return { a: "esc", to: "Senior lawyer", why: "The supplier changed the governing law." };
       } },
-    { id: "R-JUR-01", keys: ["jurisdiction"], scope: /./, standard: "Exclusive jurisdiction of the court for Vienna, Inner City.", source: SRC("20"),
+    { id: "R-JUR-01", kind: "hard", keys: ["jurisdiction"], scope: /./, standard: "Exclusive jurisdiction of the court for Vienna, Inner City.", source: SRC("20"),
       test(t) {
         if (/vienna/i.test(t) && /exclusive jurisdiction/i.test(t)) return { a: "same", why: "Still the Vienna court, exclusively." };
         return { a: "esc", to: "Senior lawyer", why: "The supplier changed the court for disputes." };
       } },
-    { id: "R-AMD-01", keys: ["amendment"], scope: /./, standard: "Amendments only in signed writing (DocuSign counts). Plain e-mail does not count.", source: SRC("22"),
-      test(t) {
-        const emailOk = /e-?mail/i.test(t) && !/e-?mail[^.]*(shall not|does not|do not|not satisfy|insufficient)/i.test(t);
-        if (emailOk) return { a: "counter", why: "The supplier wants plain e-mail to count as a written amendment. Under OMV's standard only signed writing counts. Reject to put OMV's wording back." };
-        if (!/signed/i.test(t)) return { a: "counter", why: "The signature requirement was removed. Reject to put OMV's wording back." };
-        return { a: "same", why: "Signed writing is still required." };
-      } },
+    playbook({ id: "P-AMD-01", keys: ["amendment"], topic: "amendments", standard: "Amendments only in signed writing (DocuSign counts). Plain e-mail does not count.", source: SRC("22"), suggest: "counter",
+      text: "Changes to the contract only count when signed in writing (DocuSign counts); plain e-mail does not. If the supplier changes this: Reject.",
+      trigger: /e-?mail[^.]*(satisf|counts?|suffic|valid|binding)/i, crossA: "counter", crossWhy: "Only signed writing counts as an amendment in OMV’s standard." }),
   ];
 
   // Plain-language summary of each rule, shown in the panel's Rulebook tab.
+  // Playbook entries ARE their plain-language sentence; hard checks list what they check.
   const OUTCOMES = {
     "R-PAY-01": ["Fewer than 60 days → Escalate (a commercial question, not a legal one)", "More than 60 days → Accept (favours OMV)", "60-day period gone → Reject"],
     "R-WAR-01": ["Shorter than 2 years (movables) or 3 years (immovables) → Reject", "Longer → Accept (favours OMV)", "Periods gone or reworded → Reject"],
-    "R-INS-01": ["“Proportionate” cover or proof of insurance removed → Reject"],
-    "R-LIA-01": ["Any cap or exclusion of liability → Escalate", "Basic liability sentence changed → Escalate"],
-    "R-CONF-01": ["End date added → Reject", "No longer survives the end of the contract → Reject", "Supplier may talk about the contract without OMV's consent → Reject"],
-    "R-COMP-01": ["Any change at all → Escalate"],
+    "R-LIA-01": ["Any cap or exclusion of liability → Escalate, also when it sits in another clause", "Basic liability sentence changed → Escalate"],
     "R-LAW-01": ["Not Austrian law, or the UN sales convention no longer excluded → Escalate"],
     "R-JUR-01": ["Not the Vienna court, or no longer exclusive → Escalate"],
-    "R-AMD-01": ["Plain e-mail counts as “in writing” → Reject", "Signature requirement removed → Reject"],
   };
+  RULES.forEach((r) => { if (r.kind === "playbook") OUTCOMES[r.id] = [r.text]; });
   // Quick picks when a lawyer escalates (the lawyer chooses; ContractGuard doesn't suggest who).
   // Placeholder addresses: OMV's real ones would go here.
   const CONTACTS = { "Finance / Procurement": "finance-review@omv.example", "Senior lawyer": "senior-legal@omv.example", "Compliance": "compliance-review@omv.example" };
@@ -227,6 +222,22 @@
       .sort((x, y) => (y.m.share * y.m.avg) - (x.m.share * x.m.avg) || x.k - y.k);
   }
 
+  // Does the supplier's new text touch a rule's topic, even outside that rule's own clause?
+  // E.g. a liability cap written into the insurance clause. The stronger suggestion wins.
+  // Prototype: key phrases ("trigger"). At OMV: a local model reads the text and picks the rule.
+  const RANK = { accept: 0, review: 1, reject: 2, escalate: 3 };
+  function matchByMeaning(f) {
+    const added = f.b ? sentenceDiff(f.b.paras, f.c.paras).supplier : allSentences(f.c.paras);
+    for (const r of RULES) {
+      if (!r.trigger || r === f.rule || !added.some((s) => r.trigger.test(s))) continue;
+      const a = FROM_RULE[r.crossA];
+      f.matched = r;
+      const note = `It also touches ${r.topic} (rule ${r.id}): ${r.crossWhy}`;
+      if (RANK[a] > RANK[f.a]) { f.a = a; f.to = r.crossTo || f.to; f.why = `${note} ${f.why}`; }
+      else f.why += ` ${note}`;
+    }
+  }
+
   // ---------------- 3-5. check + decide ----------------
   function review(base, cp) {
     const findings = [], same = [];
@@ -259,6 +270,7 @@
       }
       if (b && c) f.changes = wordChanges(b.body, c.body);
       if (b && c && /definition/i.test(head)) f.why += definitionNote(b, c, base);
+      if (c && !f.cosmetic) matchByMeaning(f);
       findings.push(f);
     }
     // Clause order, as in the document. A deleted clause sits where it was in OMV's standard.
@@ -310,7 +322,9 @@
       L.push("", `${f.label || "OMV"} ▸ ${omv}`, `Supplier ▸ ${sup}`);
     }
     if (f.b && f.c && f.b.num !== f.c.num) L.push("", `Note: OMV clause ${f.b.num} is clause ${f.c.num} here.`);
-    if (f.rule && !f.cosmetic && f.a !== "review") L.push("", `Rule ${f.rule.id} · ${f.rule.source}`);
+    const kind = (r) => (r.kind === "hard" ? "hard check" : "playbook");
+    if (f.rule && !f.cosmetic && f.a !== "review") L.push("", `Rule ${f.rule.id} (${kind(f.rule)}) · ${f.rule.source}`);
+    if (f.matched) L.push(`Matched by meaning to rule ${f.matched.id} (${kind(f.matched)}). Prototype: key phrases; at OMV a local model.`);
     return L.join("\n");
   }
 

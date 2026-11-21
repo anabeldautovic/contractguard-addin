@@ -167,10 +167,10 @@
 
   // ---------------- the rulebook tab ----------------
   function renderRules() {
-    let h = `<div class="rbhead"><b>Rulebook ${esc(CG.RULEBOOK_VERSION)}</b><br>Owner: ${esc(CG.RULEBOOK_OWNER.name)}. Lawyers can't change rules from Word: they propose a rule, Legal approves it, and only then ContractGuard uses it.</div>`;
+    let h = `<div class="rbhead"><b>Rulebook ${esc(CG.RULEBOOK_VERSION)}</b><br>Owner: ${esc(CG.RULEBOOK_OWNER.name)}. Two kinds of rules: <b>hard checks</b> (coded, for critical numbers and facts) and <b>playbook</b> entries (plain sentences the lawyers write and edit). Lawyers propose changes; the legal team approves before they’re used. Matching new wording to a rule uses key phrases here; at OMV a local model would do it.</div>`;
     for (const r of CG.RULES) {
-      const used = review ? review.findings.map((f, i) => ({ f, i })).filter((x) => x.f.rule === r) : [];
-      h += `<div class="rule${r.id === currentRule ? " cur" : ""}" data-id="${r.id}"><div class="rid">${esc(r.id)} <span>· ${esc(r.source.replace("OMV GPC Jan 2026, ", ""))}</span></div>`;
+      const used = review ? review.findings.map((f, i) => ({ f, i })).filter((x) => x.f.rule === r || x.f.matched === r) : [];
+      h += `<div class="rule${r.id === currentRule ? " cur" : ""}" data-id="${r.id}"><div class="rid">${esc(r.id)} <span>· ${esc(r.source.replace("OMV GPC Jan 2026, ", ""))}</span> <span class="kind ${r.kind}">${r.kind === "hard" ? "Hard check" : "Playbook"}</span></div>`;
       h += `<div class="rstd"><b>OMV position:</b> ${esc(r.standard)}</div><ul>` + CG.OUTCOMES[r.id].map((o) => `<li>${esc(o)}</li>`).join("") + `</ul>`;
       h += `<a href="${ruleChangeMail(r)}" class="sugg" data-id="${r.id}" target="_blank" rel="noopener">✎ Suggest a change to this rule</a>`;
       if (used.length) h += `<div class="used">In this contract: ` + used.map((x) => `<a href="#" class="tochange" data-i="${x.i}">${esc((x.f.c || x.f.b).num)}. ${esc(x.f.head)} → ${esc(CG.suggestion(x.f))}</a>`).join(", ") + `</div>`;
@@ -732,7 +732,7 @@
       h += `</div>`;
       if (f.rule) {
         const r = f.rule;
-        h += `<div class="rulepop" hidden><button class="x" title="Close">×</button><div class="rid">${esc(r.id)} <span>· ${esc(r.source.replace("OMV GPC Jan 2026, ", ""))}</span></div>`;
+        h += `<div class="rulepop" hidden><button class="x" title="Close">×</button><div class="rid">${esc(r.id)} <span>· ${esc(r.source.replace("OMV GPC Jan 2026, ", ""))}</span> <span class="kind ${r.kind}">${r.kind === "hard" ? "Hard check" : "Playbook"}</span></div>`;
         h += `<div class="rstd"><b>OMV position:</b> ${esc(r.standard)}</div><ul>` + CG.OUTCOMES[r.id].map((o) => `<li>${esc(o)}</li>`).join("") + `</ul>`;
         h += `<div class="popacts"><a href="${ruleChangeMail(r)}" class="sugg" data-id="${r.id}" target="_blank" rel="noopener">✎ Suggest a change to this rule</a><a href="#" class="tobook" data-id="${r.id}">Open in Rulebook ›</a></div></div>`;
       }
