@@ -296,28 +296,9 @@
         const before = ctx.document.changeTrackingMode;
         ctx.document.changeTrackingMode = Word.ChangeTrackingMode.trackAll;
         if (cm) { reply = cm.reply(`✖ Rejected. OMV standard wording put back (tracked change).${over}${why}`); cm.resolved = true; }
-        const isSubhead = (t) => /^\d+(\.\d+)+ /.test(t) && !/[.;:]$/.test(t);
         if (f.b && c) {
-          // Changed clause: go paragraph by paragraph and put back only what differs from OMV's text.
-          const ops = CG.diffSeq(f.b.paras, c.paras);
-          let j = 0, last = paras.items[c.headIdx], rem = [], add = [];
-          const flush = () => {
-            const n = Math.min(rem.length, add.length);
-            for (let x = 0; x < n; x++) { add[x].insertText(rem[x], "Replace"); last = add[x]; }
-            add.slice(n).forEach((p) => p.delete());
-            for (const t of rem.slice(n)) {
-              last = last.insertParagraph(t, "After");
-              last.styleBuiltIn = Word.Style.normal;
-              if (isSubhead(t)) last.font.bold = true;
-            }
-            rem = []; add = [];
-          };
-          for (const o of ops) {
-            if (o.t === "=") { flush(); last = paras.items[c.bodyIdx[j++]]; }
-            else if (o.t === "-") rem.push(o.w);
-            else add.push(paras.items[c.bodyIdx[j++]]);
-          }
-          flush();
+          // Changed clause: put back only the paragraphs that differ from OMV's text.
+          rewriteBody(paras, c, f.b.paras);
         } else if (!f.b && c) {
           // Clause the supplier added: take it out.
           clauseRange(paras, c).delete();
@@ -377,30 +358,89 @@
         }
       }
 
-      if (d.k === "reject") {
-        // Undo our tracked change so the supplier's wording comes back.
-        if (Office.context.requirements.isSetSupported("WordApi", "1.6")) {
-          const { paras, cp } = await readClauses(ctx);
-          const c = locate(cp, f.c || f.b);
-          if (c) {
-            const tc = clauseRange(paras, c).getTrackedChanges();
-            tc.load("items");
-            await ctx.sync();
-            if (tc.items.length) { tc.rejectAll(); await ctx.sync(); note = "Decision undone. The supplier's wording is back."; }
-            else note = "Decision undone in the panel, but no tracked change was found in this clause. If OMV's wording is still there, click it and use Review → Reject.";
-          } else {
-            note = "Decision undone in the panel. Couldn't find the clause, so please undo the tracked change yourself: Review → Reject.";
-          }
-        } else {
-          note = "Decision undone in the panel. This Word can't undo tracked changes for me, so please do it yourself: click the clause, then Review → Reject.";
-        }
-      }
+      if (d.k === "reject") note = await undoReject(ctx, f);
     });
     decisions[i] = null;
     if (proposing === i) proposing = null;
     addLog(f, "Go back", `Undid ${ACT_LABEL[d.k]}`);
     showResult(); renderRules();
     status(note);
+  }
+
+  // Make a clause's body read `want`, changing only the paragraphs that differ (others stay untouched).
+  const isSubhead = (t) => /^\d+(\.\d+)+ /.test(t) && !/[.;:]$/.test(t);
+  function rewriteBody(paras, c, want) {
+    const ops = CG.diffSeq(want, c.paras); // "-" = wanted but missing, "+" = there but not wanted
+    let j = 0, last = paras.items[c.headIdx], rem = [], add = [];
+    const flush = () => {
+      const n = Math.min(rem.length, add.length);
+      for (let x = 0; x < n; x++) { add[x].insertText(rem[x], "Replace"); last = add[x]; }
+      add.slice(n).forEach((p) => p.delete());
+      for (const t of rem.slice(n)) {
+        last = last.insertParagraph(t, "After");
+        last.styleBuiltIn = Word.Style.normal;
+        if (isSubhead(t)) last.font.bold = true;
+      }
+      rem = []; add = [];
+    };
+    for (const o of ops) {
+      if (o.t === "=") { flush(); last = paras.items[c.bodyIdx[j++]]; }
+      else if (o.t === "-") rem.push(o.w);
+      else add.push(paras.items[c.bodyIdx[j++]]);
+    }
+    flush();
+  }
+
+  // Take back a Reject: get the supplier's wording back and remove the red tracked-change marks.
+  // Tries three ways, from gentlest to strongest, and says which one worked.
+  async function undoReject(ctx, f) {
+    const can16 = Office.context.requirements.isSetSupported("WordApi", "1.6");
+    const ours = new Set([...(f.b ? f.b.paras : []), ...(f.c ? f.c.paras : []), f.b ? `${f.b.num} ${f.b.head}` : "", f.c ? `${f.c.num} ${f.c.head}` : ""].map(norm).filter(Boolean));
+    const countIn = async (c) => {
+      const { paras } = await readClauses(ctx);
+      const tc = clauseRange(paras, c).getTrackedChanges(); tc.load("items"); await ctx.sync();
+      return tc;
+    };
+    let { cp } = await readClauses(ctx);
+    let c = locate(cp, f.c || f.b);
+
+    // 1. Undo the tracked changes inside this clause.
+    if (can16 && c) {
+      try {
+        const tc = await countIn(c);
+        if (tc.items.length) {
+          const n = tc.items.length;
+          tc.rejectAll(); await ctx.sync();
+          ({ cp } = await readClauses(ctx)); c = locate(cp, f.c || f.b);
+          if (!c || !(await countIn(c)).items.length) return `Decision undone. The supplier's wording is back (${n} tracked change${n === 1 ? "" : "s"} undone).`;
+        }
+      } catch (e) { console.warn("Way 1 failed", e); }
+
+      // 2. Look through all tracked changes in the document for ours (same text as this clause).
+      try {
+        const all = ctx.document.body.getTrackedChanges(); all.load("items/text"); await ctx.sync();
+        const mine = all.items.filter((t) => [...ours].some((o) => o.includes(norm(t.text)) && norm(t.text).length > 2));
+        if (mine.length) { mine.forEach((t) => t.reject()); await ctx.sync(); return `Decision undone. The supplier's wording is back (${mine.length} tracked change${mine.length === 1 ? "" : "s"} undone).`; }
+      } catch (e) { console.warn("Way 2 failed", e); }
+    }
+
+    // 3. Last resort: Track Changes off, write the supplier's original text back into the clause.
+    try {
+      ctx.document.load("changeTrackingMode"); await ctx.sync();
+      const before = ctx.document.changeTrackingMode;
+      ctx.document.changeTrackingMode = Word.ChangeTrackingMode.off;
+      const { paras, cp: cp2 } = await readClauses(ctx);
+      const cc = locate(cp2, f.c || f.b);
+      if (!cc) { ctx.document.changeTrackingMode = before; await ctx.sync(); return "Decision undone in the panel, but I couldn't find the clause. Please use Review → Reject on the red text."; }
+      if (!f.c) clauseRange(paras, cc).delete(); // we had put back a deleted clause: remove it again
+      else rewriteBody(paras, cc, f.c.paras);     // change back only the paragraphs that differ
+      ctx.document.changeTrackingMode = before;
+      await ctx.sync();
+      return "Decision undone. I wrote the supplier's wording back directly (Track Changes was paused for this).";
+    } catch (e) {
+      console.warn("Way 3 failed", e);
+      return "Decision undone in the panel, but Word didn't let me remove the red text. Please click it and use Review → Reject. (" + (e.message || e) + ")";
+    }
   }
 
   // ---------------- the changes tab ----------------
