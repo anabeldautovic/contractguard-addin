@@ -5,14 +5,14 @@
            xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides"
            xsi:type="TaskPaneApp">
   <Id>791a4291-c600-4407-af3b-94dd1fd49c2b</Id>
-  <Version>1.0.0.0</Version>
+  <Version>1.0.1.0</Version>
   <ProviderName>ContractGuard prototype</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="ContractGuard"/>
   <Description DefaultValue="Checks a supplier's returned contract against the OMV standard and adds a comment to each change. Practice prototype."/>
   <IconUrl DefaultValue="https://anabeldautovic.github.io/contractguard-addin/assets/icon-32.png"/>
   <HighResolutionIconUrl DefaultValue="https://anabeldautovic.github.io/contractguard-addin/assets/icon-80.png"/>
-  <SupportUrl DefaultValue="https://anabeldautovic.github.io/contractguard-addin/taskpane.html"/>
+  <SupportUrl DefaultValue="https://anabeldautovic.github.io/contractguard-addin/taskpane.html?v=4"/>
   <AppDomains>
     <AppDomain>https://anabeldautovic.github.io/contractguard-addin</AppDomain>
   </AppDomains>
@@ -25,7 +25,7 @@
     </Sets>
   </Requirements>
   <DefaultSettings>
-    <SourceLocation DefaultValue="https://anabeldautovic.github.io/contractguard-addin/taskpane.html"/>
+    <SourceLocation DefaultValue="https://anabeldautovic.github.io/contractguard-addin/taskpane.html?v=4"/>
   </DefaultSettings>
   <Permissions>ReadWriteDocument</Permissions>
   <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="VersionOverridesV1_0">
@@ -72,7 +72,7 @@
       </bt:Images>
       <bt:Urls>
         <bt:Url id="Commands.Url" DefaultValue="https://anabeldautovic.github.io/contractguard-addin/commands.html"/>
-        <bt:Url id="Taskpane.Url" DefaultValue="https://anabeldautovic.github.io/contractguard-addin/taskpane.html"/>
+        <bt:Url id="Taskpane.Url" DefaultValue="https://anabeldautovic.github.io/contractguard-addin/taskpane.html?v=4"/>
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="Group.Label" DefaultValue="ContractGuard"/>
