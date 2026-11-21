@@ -34,8 +34,8 @@
       status("This version of Word is too old for comments from add-ins. Try Word in the browser (office.com).", true); return;
     }
     $("run").disabled = false; $("clear").disabled = false;
-    $("run").onclick = () => guarded(runReview);
-    $("clear").onclick = () => guarded(clearComments);
+    $("run").onclick = onRun;
+    $("clear").onclick = onClear;
     document.querySelectorAll(".tab").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
     loadLog();
     renderRules();
@@ -78,6 +78,11 @@
   function saveLog() { try { settings().set("contractguard.log", log); settings().saveAsync(() => {}); } catch (e) { console.warn(e); } }
   function addLog(f, decision, note) {
     log.push({ t: new Date().toISOString(), clause: `${(f.c || f.b).num}. ${f.head}`, suggested: f.a === "review" ? "(no rule)" : CG.LABEL[f.a], decision, note: note || "" });
+    saveLog(); renderLog();
+  }
+  // Events that aren't about one change (review run, comments removed).
+  function addEvent(what, note) {
+    log.push({ t: new Date().toISOString(), clause: "(whole document)", suggested: "", decision: what, note: note || "" });
     saveLog(); renderLog();
   }
   function renderLog() {
@@ -142,11 +147,39 @@
     return n;
   }
 
+  // ---------------- ask before anything that throws away work ----------------
+  function ask(msg, yesLabel, onYes) {
+    const box = $("confirm");
+    box.innerHTML = `<div class="ft">${msg}</div><div class="fbtns"><button class="act danger yes">${yesLabel}</button><button class="undo no">Cancel</button></div>`;
+    box.hidden = false;
+    box.querySelector(".yes").onclick = () => { box.hidden = true; onYes(); };
+    box.querySelector(".no").onclick = () => { box.hidden = true; };
+    box.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    box.querySelector(".no").focus();
+  }
+  function onRun() {
+    const made = decisions.filter((d) => d && !d.auto).length;
+    if (review && made) ask(`Run the review again? This replaces ContractGuard's comments, including your ${made} decision repl${made === 1 ? "y" : "ies"}. Your decisions stay in the Log.`, "Run again", () => guarded(runReview));
+    else guarded(runReview);
+  }
+  function onClear() {
+    guarded(async () => {
+      let n = 0;
+      await Word.run(async (ctx) => {
+        const cs = ctx.document.body.getComments(); cs.load("items/content"); await ctx.sync();
+        n = cs.items.filter((c) => CG.isOurs(c.content)).length;
+      });
+      if (!n) { status("No ContractGuard comments in this document."); return; }
+      ask(`Remove all ${n} ContractGuard comment${n === 1 ? "" : "s"} from this document? Your decision replies in them are removed too. The Log stays.`, "Remove", () => guarded(clearComments));
+    });
+  }
+
   async function clearComments() {
     await Word.run(async (ctx) => {
       const n = await deleteOurComments(ctx);
+      if (n) addEvent("Comments removed", `${n} ContractGuard comment${n === 1 ? "" : "s"}`);
       status(n ? `Removed ${n} ContractGuard comment${n > 1 ? "s" : ""}. Yellow highlights stay; use Undo or remove them by hand.` : "No ContractGuard comments found.");
-      $("result").innerHTML = "";
+      $("result").innerHTML = `<p class="muted">Press Run review to see the supplier's changes here.</p>`;
       review = null; decisions = []; pending = null; proposing = null;
       renderRules();
     });
@@ -245,6 +278,7 @@
 
       review = R; pending = null; proposing = null;
       decisions = R.findings.map((f) => f.cosmetic ? { k: "accept", auto: true, text: "Accepted automatically." } : null);
+      addEvent("Review run", `${R.findings.length} change${R.findings.length === 1 ? "" : "s"}, ${R.same.length} of ${R.total} clauses identical`);
       R.findings.forEach((f) => { if (f.cosmetic) addLog(f, "Accept", "Automatic: wording only"); });
       showResult(); renderRules(); showTab("changes");
       const open = decisions.filter((d) => !d).length;
