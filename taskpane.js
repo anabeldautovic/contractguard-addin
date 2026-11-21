@@ -36,13 +36,13 @@
     if (busy) return;
     busy = true;
     $("run").disabled = $("clear").disabled = true;
-    document.querySelectorAll(".act").forEach((b) => (b.disabled = true));
+    document.querySelectorAll(".act,.undo").forEach((b) => (b.disabled = true));
     try { await fn(); }
     catch (e) { console.error(e); status("Something went wrong: " + (e.message || e), true); }
     finally {
       busy = false;
       $("run").disabled = $("clear").disabled = false;
-      document.querySelectorAll(".act").forEach((b) => (b.disabled = false));
+      document.querySelectorAll(".act,.undo").forEach((b) => (b.disabled = false));
     }
   }
 
@@ -84,6 +84,22 @@
     return r;
   }
 
+  // Search for the words the supplier added, so they can be highlighted yellow.
+  function findAdded(paras, c, f) {
+    const out = [];
+    if (!f.changes || f.cosmetic) return out;
+    for (const phrase of f.changes.added) {
+      const p = phrase.replace(/[.,;:]+$/, "");
+      if (!p || p.length > 250) continue;
+      for (const idx of c.bodyIdx) {
+        const res = paras.items[idx].search(p, { matchCase: true });
+        res.load("items");
+        out.push(res);
+      }
+    }
+    return out;
+  }
+
   async function runReview() {
     status("Reading the document…");
     await Word.run(async (ctx) => {
@@ -101,17 +117,7 @@
       const searches = [], comments = [];
       for (const f of R.findings) {
         const range = f.c ? clauseRange(paras, f.c) : paras.items[0].getRange("Whole");
-        if (f.c && f.changes && !f.cosmetic) {
-          for (const phrase of f.changes.added) {
-            const p = phrase.replace(/[.,;:]+$/, "");
-            if (!p || p.length > 250) continue;
-            for (const idx of f.c.bodyIdx) {
-              const res = paras.items[idx].search(p, { matchCase: true });
-              res.load("items");
-              searches.push(res);
-            }
-          }
-        }
+        if (f.c) searches.push(...findAdded(paras, f.c, f));
         const cm = range.insertComment(CG.commentText(f));
         cm.load("id");
         comments.push(cm);
@@ -142,17 +148,17 @@
       const cm = await getComment(ctx, f);
       const { paras, cp } = await readClauses(ctx);
       const c = f.c ? locate(cp, f.c) : null;
-      let text;
+      let text, reply = null;
 
       if (k === "accept") {
         text = f.c ? "Accepted. Supplier's wording stays." : "Accepted. The clause stays deleted.";
-        if (cm) { cm.reply("✔ " + text); cm.resolved = true; }
+        if (cm) { reply = cm.reply("✔ " + text); cm.resolved = true; }
         if (c) clauseRange(paras, c).font.highlightColor = null;
       }
 
       else if (k === "reject") {
         ctx.document.changeTrackingMode = Word.ChangeTrackingMode.trackAll;
-        if (cm) { cm.reply("✖ Rejected. OMV standard wording put back (tracked change)."); cm.resolved = true; }
+        if (cm) { reply = cm.reply("✖ Rejected. OMV standard wording put back (tracked change)."); cm.resolved = true; }
         if (f.b && c) {
           // Changed clause: replace the supplier's text with OMV's.
           if (c.bodyIdx.length) {
@@ -186,16 +192,65 @@
 
       else if (k === "escalate") {
         const who = f.to || "Senior lawyer";
-        if (cm) cm.reply(`⚑ Escalated to ${who}.`);
+        if (cm) reply = cm.reply(`⚑ Escalated to ${who}.`);
         text = `Escalated to ${who}. The comment stays open.`;
       }
 
+      if (reply) reply.load("id");
       await ctx.sync();
-      decisions[i] = { k, text };
+      decisions[i] = { k, text, replyId: reply ? reply.id : null };
     });
     showResult();
     const n = decisions.filter(Boolean).length;
     status(n === decisions.length ? "All changes decided." : `${n} of ${decisions.length} decided.`);
+  }
+
+  // ---------------- change your mind ----------------
+  async function undo(i) {
+    const f = review.findings[i], d = decisions[i];
+    let note = "Decision undone. Choose again.";
+    await Word.run(async (ctx) => {
+      const cm = await getComment(ctx, f);
+      if (cm) {
+        cm.replies.load("items/id");
+        await ctx.sync();
+        const r = cm.replies.items.find((x) => x.id === d.replyId);
+        if (r) r.delete();
+        cm.resolved = false;
+      }
+      await ctx.sync();
+
+      if (d.k === "accept") {
+        // Put the yellow highlight back on the supplier's added words.
+        const { paras, cp } = await readClauses(ctx);
+        const c = f.c ? locate(cp, f.c) : null;
+        if (c) {
+          const res = findAdded(paras, c, f);
+          await ctx.sync();
+          res.forEach((x) => { if (x.items.length) x.items[0].font.highlightColor = "Yellow"; });
+          await ctx.sync();
+        }
+      }
+
+      if (d.k === "reject") {
+        // Undo our tracked change so the supplier's wording comes back.
+        if (Office.context.requirements.isSetSupported("WordApi", "1.6")) {
+          const { paras, cp } = await readClauses(ctx);
+          const c = locate(cp, f.c || f.b);
+          if (c) {
+            clauseRange(paras, c).getTrackedChanges().rejectAll();
+            await ctx.sync();
+          } else {
+            note = "Decision undone in the panel. Couldn't find the clause, so please undo the tracked change yourself: Review → Reject.";
+          }
+        } else {
+          note = "Decision undone in the panel. This Word can't undo tracked changes for me, so please do it yourself: click the clause, then Review → Reject.";
+        }
+      }
+    });
+    decisions[i] = null;
+    showResult();
+    status(note);
   }
 
   // ---------------- the panel ----------------
@@ -218,7 +273,7 @@
       const d = decisions[i];
       h += `<div class="item l-${f.a}${d ? " decided" : ""}"><div class="top" data-i="${i}"><div class="h">${esc((f.c || f.b).num)}. ${esc(f.head)} · ${esc(label)}</div><div class="w">${esc(f.why)}</div></div>`;
       if (d) {
-        h += `<div class="done d-${d.k}">${esc(d.text)}</div>`;
+        h += `<div class="done d-${d.k}">${esc(d.text)}</div><button class="undo" data-i="${i}">↩ Go back</button>`;
       } else {
         const rec = REC[f.a];
         h += `<div class="acts">` + ACTIONS.map((a) => `<button class="act${a.k === rec ? " rec" : ""}" data-i="${i}" data-k="${a.k}"${busy ? " disabled" : ""}>${a.label}</button>`).join("") + `</div>`;
@@ -229,6 +284,9 @@
     $("result").innerHTML = h;
     $("result").querySelectorAll(".top").forEach((el) => {
       el.onclick = () => { const f = R.findings[+el.dataset.i]; if (f.c) guarded(() => jumpTo(f.c)); };
+    });
+    $("result").querySelectorAll(".undo").forEach((el) => {
+      el.onclick = () => guarded(() => undo(+el.dataset.i));
     });
     $("result").querySelectorAll(".act").forEach((el) => {
       el.onclick = () => guarded(() => decide(+el.dataset.i, el.dataset.k));
