@@ -148,8 +148,14 @@
   }
 
   // ---------------- ask before anything that throws away work ----------------
+  // The browser may still show an older copy of the page; create the box if it isn't there.
+  function confirmBox() {
+    let box = $("confirm");
+    if (!box) { box = document.createElement("div"); box.id = "confirm"; box.className = "form"; box.hidden = true; $("run").after(box); }
+    return box;
+  }
   function ask(msg, yesLabel, onYes) {
-    const box = $("confirm");
+    const box = confirmBox();
     box.innerHTML = `<div class="ft">${msg}</div><div class="fbtns"><button class="act danger yes">${yesLabel}</button><button class="undo no">Cancel</button></div>`;
     box.hidden = false;
     box.querySelector(".yes").onclick = () => { box.hidden = true; onYes(); };
