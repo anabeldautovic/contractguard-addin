@@ -3,7 +3,7 @@
   "use strict";
   const CG = window.ContractGuard;
   const $ = (id) => document.getElementById(id);
-  const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
   // Colour for each kind of suggestion (CSS classes).
   const PILL = { escalate: "esc", reject: "counter", review: "route", accept: "ok" };
   const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9%]+/g, " ").trim();
@@ -14,9 +14,16 @@
     { k: "reject", label: "Reject" },
     { k: "escalate", label: "Escalate" },
   ];
+  const ACT_LABEL = { accept: "Accept", reject: "Reject", escalate: "Escalate" };
 
   let review = null;     // last review result
-  let decisions = [];    // decisions[i] = {k, text, replyId, auto} for finding i, or null
+  let decisions = [];    // decisions[i] = {k, text, replyId, auto, note} for finding i, or null
+  let pending = null;    // {i, k}: lawyer chose something other than the suggestion; waiting for "why"
+  let proposing = null;  // index of the finding whose "propose a rule" form is open
+  let log = [];          // decision log, saved inside the document
+  let tab = "changes";
+  let currentRule = null; // rule id highlighted in the Rulebook tab
+  let lastCp = null;     // clauses from the last read, to know where the cursor is
   let busy = false;
 
   function status(msg, isErr) { const s = $("status"); s.textContent = msg; s.className = isErr ? "err" : ""; }
@@ -29,23 +36,102 @@
     $("run").disabled = false; $("clear").disabled = false;
     $("run").onclick = () => guarded(runReview);
     $("clear").onclick = () => guarded(clearComments);
+    document.querySelectorAll(".tab").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
+    loadLog();
+    renderRules();
+    renderLog();
     status("Open a supplier's contract, then press Run review.");
+    // Follow the cursor: when it moves into a clause, show that change and its rule.
+    try { Office.context.document.addHandlerAsync(Office.EventType.DocumentSelectionChanged, onSelection); } catch (e) { console.warn(e); }
+    Word.run(async (ctx) => { await readClauses(ctx); }).catch(() => {});
   });
 
   async function guarded(fn) {
     if (busy) return;
     busy = true;
-    $("run").disabled = $("clear").disabled = true;
-    document.querySelectorAll(".act,.undo").forEach((b) => (b.disabled = true));
+    const btns = () => document.querySelectorAll("#run, #clear, #result button");
+    btns().forEach((b) => (b.disabled = true));
     try { await fn(); }
     catch (e) { console.error(e); status("Something went wrong: " + (e.message || e), true); }
     finally {
       busy = false;
-      $("run").disabled = $("clear").disabled = false;
-      document.querySelectorAll(".act,.undo").forEach((b) => (b.disabled = false));
+      btns().forEach((b) => (b.disabled = false));
     }
   }
 
+  // ---------------- tabs ----------------
+  function showTab(t) {
+    tab = t;
+    document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("on", b.dataset.tab === t));
+    $("result").hidden = t !== "changes"; $("rules").hidden = t !== "rules"; $("log").hidden = t !== "log";
+    if (t === "rules") scrollToRule();
+  }
+  function openRule(id) { currentRule = id; renderRules(); showTab("rules"); }
+  function scrollToRule() {
+    const el = currentRule && document.querySelector(`.rule[data-id="${currentRule}"]`);
+    if (el) el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+
+  // ---------------- the decision log (saved in the document) ----------------
+  const settings = () => Office.context.document.settings;
+  function loadLog() { try { log = settings().get("contractguard.log") || []; } catch (e) { log = []; } }
+  function saveLog() { try { settings().set("contractguard.log", log); settings().saveAsync(() => {}); } catch (e) { console.warn(e); } }
+  function addLog(f, decision, note) {
+    log.push({ t: new Date().toISOString(), clause: `${(f.c || f.b).num}. ${f.head}`, suggested: f.a === "review" ? "(no rule)" : CG.LABEL[f.a], decision, note: note || "" });
+    saveLog(); renderLog();
+  }
+  function renderLog() {
+    if (!log.length) { $("log").innerHTML = `<p class="muted">No decisions yet. Every Accept, Reject, Escalate, Go back and rule proposal is recorded here and saved inside this document.</p>`; return; }
+    const time = (t) => { const d = new Date(t); return d.toLocaleDateString() + " " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); };
+    let h = `<p class="muted">Saved inside this document. Your name is on each reply in the Word comments.</p><table class="logt"><tr><th>When</th><th>Clause</th><th>Suggested</th><th>Decision</th></tr>`;
+    [...log].reverse().forEach((e) => {
+      const over = e.suggested !== "(no rule)" && ACT_LABEL[e.decision.toLowerCase()] && e.decision !== e.suggested;
+      h += `<tr><td>${esc(time(e.t))}</td><td>${esc(e.clause)}</td><td>${esc(e.suggested)}</td><td>${over ? "<b>" : ""}${esc(e.decision)}${over ? "</b>" : ""}${e.note ? `<div class="note">${esc(e.note)}</div>` : ""}</td></tr>`;
+    });
+    const cell = (x) => `"${String(x).replace(/"/g, '""')}"`;
+    const csv = [["Time", "Clause", "Suggested", "Decision", "Note"], ...log.map((e) => [e.t, e.clause, e.suggested, e.decision, e.note])].map((r) => r.map(cell).join(",")).join("\r\n");
+    h += `</table><a class="mini" download="contractguard-log.csv" href="data:text/csv;charset=utf-8,${encodeURIComponent(csv)}">Download log (CSV)</a>`;
+    $("log").innerHTML = h;
+  }
+
+  // ---------------- the rulebook tab ----------------
+  function renderRules() {
+    let h = `<div class="rbhead"><b>Rulebook ${esc(CG.RULEBOOK_VERSION)}</b><br>Owner: ${esc(CG.RULEBOOK_OWNER.name)}. Lawyers can't change rules from Word: they propose a rule, Legal approves it, and only then ContractGuard uses it.</div>`;
+    for (const r of CG.RULES) {
+      const used = review ? review.findings.map((f, i) => ({ f, i })).filter((x) => x.f.rule === r) : [];
+      h += `<div class="rule${r.id === currentRule ? " cur" : ""}" data-id="${r.id}"><div class="rid">${esc(r.id)} <span>· ${esc(r.source.replace("OMV GPC Jan 2026, ", ""))}</span></div>`;
+      h += `<div class="rstd"><b>OMV position:</b> ${esc(r.standard)}</div><ul>` + CG.OUTCOMES[r.id].map((o) => `<li>${esc(o)}</li>`).join("") + `</ul>`;
+      if (used.length) h += `<div class="used">In this contract: ` + used.map((x) => `<a href="#" class="tochange" data-i="${x.i}">${esc((x.f.c || x.f.b).num)}. ${esc(x.f.head)} → ${esc(CG.suggestion(x.f))}</a>`).join(", ") + `</div>`;
+      h += `</div>`;
+    }
+    h += `<div class="rule"><div class="rid">Every other change</div><ul><li>No rule covers it → You decide. ContractGuard never guesses.</li><li>A rule's point is unchanged but other wording changed → You decide.</li><li>Only punctuation, capitals or spacing changed → Accepted automatically.</li></ul></div>`;
+    const body = `Proposal for a new ContractGuard rule\n\nClause:\nWhen the supplier changes:\nContractGuard should suggest (Accept / Reject / Escalate to whom):\nBecause:\n\nProposed by:`;
+    h += `<a class="mini" href="${mailto(CG.RULEBOOK_OWNER.email, "ContractGuard: new rule proposal", body)}" target="_blank" rel="noopener">✎ Propose a new rule</a>`;
+    $("rules").innerHTML = h;
+    $("rules").querySelectorAll(".tochange").forEach((a) => (a.onclick = (e) => { e.preventDefault(); showTab("changes"); focusCard(+a.dataset.i, true); }));
+  }
+
+  // ---------------- e-mails ----------------
+  const mailto = (to, subject, body) => `mailto:${to}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  function docName() {
+    try { const u = Office.context.document.url || ""; return decodeURIComponent(u.split(/[\\/]/).pop().split("?")[0]) || "the supplier's contract"; }
+    catch (e) { return "the supplier's contract"; }
+  }
+  function escalationMail(f, note) {
+    const who = f.to || "Senior lawyer";
+    const subject = `ContractGuard escalation: clause ${(f.c || f.b).num} ${f.head} (${docName()})`;
+    const body = `Hello,\n\nplease decide on this change in ${docName()}:\n\n` + CG.commentText(f).split("\n").slice(2).join("\n") +
+      (note ? `\n\nNote from the reviewing lawyer: ${note}` : "") + `\n\nThe Word comment on this clause stays open until it's decided.\n`;
+    return { who, href: mailto(CG.CONTACTS[who] || CG.CONTACTS["Senior lawyer"], subject, body) };
+  }
+  function proposalMail(f, d, when, should, because) {
+    const subject = `ContractGuard: rule proposal for clause ${(f.c || f.b).num} ${f.head}`;
+    const body = `Proposal for the ContractGuard rulebook\n\nClause: ${(f.c || f.b).num}. ${f.head}\nWhen the supplier: ${when}\nContractGuard should suggest: ${should}\nBecause: ${because}\n\n` +
+      `Current rule: ${f.rule ? f.rule.id : "none (ContractGuard said: you decide)"}\nContractGuard suggested: ${f.a === "review" ? "nothing" : CG.LABEL[f.a]}. The lawyer decided: ${ACT_LABEL[d.k]}.\nContract: ${docName()}\n`;
+    return mailto(CG.RULEBOOK_OWNER.email, subject, body);
+  }
+
+  // ---------------- reading the document ----------------
   async function deleteOurComments(ctx) {
     const cs = ctx.document.body.getComments();
     cs.load("items/content");
@@ -61,7 +147,8 @@
       const n = await deleteOurComments(ctx);
       status(n ? `Removed ${n} ContractGuard comment${n > 1 ? "s" : ""}. Yellow highlights stay; use Undo or remove them by hand.` : "No ContractGuard comments found.");
       $("result").innerHTML = "";
-      review = null; decisions = [];
+      review = null; decisions = []; pending = null; proposing = null;
+      renderRules();
     });
   }
 
@@ -75,7 +162,9 @@
       isHeading: /^Heading\d/.test(p.styleBuiltIn || ""),
       isTitle: p.styleBuiltIn === "Title",
     }));
-    return { paras, cp: CG.splitClauses(list) };
+    const cp = CG.splitClauses(list);
+    lastCp = cp;
+    return { paras, cp };
   }
   const locate = (cp, ref) => cp.find((c) => norm(c.head) === norm(ref.head)) || cp.find((c) => c.num === ref.num) || null;
   function clauseRange(paras, c) {
@@ -127,6 +216,7 @@
     return out;
   }
 
+  // ---------------- run the review ----------------
   async function runReview() {
     status("Reading the document…");
     await Word.run(async (ctx) => {
@@ -152,11 +242,11 @@
       found.flat().forEach((res) => { if (res.items.length) res.items[0].font.highlightColor = "Yellow"; });
       await ctx.sync();
       R.findings.forEach((f, i) => (f.commentId = comments[i].id));
-      await ctx.sync();
 
-      review = R;
+      review = R; pending = null; proposing = null;
       decisions = R.findings.map((f) => f.cosmetic ? { k: "accept", auto: true, text: "Accepted automatically." } : null);
-      showResult();
+      R.findings.forEach((f) => { if (f.cosmetic) addLog(f, "Accept", "Automatic: wording only"); });
+      showResult(); renderRules(); showTab("changes");
       const open = decisions.filter((d) => !d).length;
       status(R.findings.length ? `Done. ${open} change${open === 1 ? "" : "s"} for you to decide.` : "Done. No changes from the OMV standard.");
     });
@@ -170,8 +260,19 @@
     return cs.items.find((c) => c.id === f.commentId) || null;
   }
 
-  async function decide(i, k) {
+  // A lawyer clicks a button. If it's not what ContractGuard suggested, ask "why?" first.
+  function choose(i, k) {
     const f = review.findings[i];
+    const rec = f.a === "review" ? null : f.a;
+    if (rec && k !== rec) { pending = { i, k }; showResult(); const t = document.querySelector(".why textarea"); if (t) t.focus(); return; }
+    guarded(() => decide(i, k, ""));
+  }
+
+  async function decide(i, k, note) {
+    const f = review.findings[i];
+    const rec = f.a === "review" ? null : f.a;
+    const over = rec && k !== rec ? ` (suggested: ${CG.LABEL[rec]})` : "";
+    const why = note ? ` Reason: ${note}` : "";
     await Word.run(async (ctx) => {
       const cm = await getComment(ctx, f);
       const { paras, cp } = await readClauses(ctx);
@@ -180,23 +281,27 @@
 
       if (k === "accept") {
         text = f.c ? "Accepted. Supplier's wording stays." : "Accepted. The clause stays deleted.";
-        if (cm) { reply = cm.reply("✔ " + text); cm.resolved = true; }
+        if (cm) { reply = cm.reply(`✔ ${text}${over}${why}`); cm.resolved = true; }
         if (c) clauseRange(paras, c).font.highlightColor = null;
       }
 
       else if (k === "reject") {
+        // Put OMV's wording back as tracked changes, then set Track Changes back to how the lawyer had it.
+        ctx.document.load("changeTrackingMode");
+        await ctx.sync();
+        const before = ctx.document.changeTrackingMode;
         ctx.document.changeTrackingMode = Word.ChangeTrackingMode.trackAll;
-        if (cm) { reply = cm.reply("✖ Rejected. OMV standard wording put back (tracked change)."); cm.resolved = true; }
+        if (cm) { reply = cm.reply(`✖ Rejected. OMV standard wording put back (tracked change).${over}${why}`); cm.resolved = true; }
         const isSubhead = (t) => /^\d+(\.\d+)+ /.test(t) && !/[.;:]$/.test(t);
         if (f.b && c) {
           // Changed clause: go paragraph by paragraph and put back only what differs from OMV's text.
           const ops = CG.diffSeq(f.b.paras, c.paras);
           let j = 0, last = paras.items[c.headIdx], rem = [], add = [];
           const flush = () => {
-            const k = Math.min(rem.length, add.length);
-            for (let x = 0; x < k; x++) { add[x].insertText(rem[x], "Replace"); add[x].getRange("Whole").font.highlightColor = null; last = add[x]; }
-            add.slice(k).forEach((p) => p.delete());
-            for (const t of rem.slice(k)) {
+            const n = Math.min(rem.length, add.length);
+            for (let x = 0; x < n; x++) { add[x].insertText(rem[x], "Replace"); last = add[x]; }
+            add.slice(n).forEach((p) => p.delete());
+            for (const t of rem.slice(n)) {
               last = last.insertParagraph(t, "After");
               last.styleBuiltIn = Word.Style.normal;
               if (isSubhead(t)) last.font.bold = true;
@@ -220,20 +325,22 @@
           put(`${f.b.num} ${f.b.head}`).styleBuiltIn = Word.Style.heading1;
           f.b.paras.forEach((t) => { const p = put(t); p.styleBuiltIn = Word.Style.normal; if (isSubhead(t)) p.font.bold = true; });
         }
-        text = f.b ? "Rejected. OMV standard wording put back." : "Rejected. Supplier's new clause removed.";
-        text += " Shown as a tracked change.";
+        ctx.document.changeTrackingMode = before;
+        text = (f.b ? "Rejected. OMV standard wording put back." : "Rejected. Supplier's new clause removed.") + " Shown as a tracked change.";
       }
 
       else if (k === "escalate") {
-        if (cm) reply = cm.reply("⚑ Escalated.");
+        if (cm) reply = cm.reply(`⚑ Escalated.${over}${why}`);
         text = "Escalated. The comment stays open.";
       }
 
       if (reply) reply.load("id");
       await ctx.sync();
-      decisions[i] = { k, text, replyId: reply ? reply.id : null };
+      decisions[i] = { k, text, note, replyId: reply ? reply.id : null };
     });
-    showResult();
+    pending = null;
+    addLog(f, ACT_LABEL[k], note);
+    showResult(); renderRules();
     const n = decisions.filter(Boolean).length;
     status(n === decisions.length ? "All changes decided." : `${n} of ${decisions.length} decided.`);
   }
@@ -253,10 +360,10 @@
       }
       await ctx.sync();
 
-      if (d.k === "accept") {
+      if (d.k === "accept" && f.c) {
         // Put the yellow highlight back on the supplier's added words.
         const { paras, cp } = await readClauses(ctx);
-        const c = f.c ? locate(cp, f.c) : null;
+        const c = locate(cp, f.c);
         if (c) {
           const res = findAdded(paras, c, f);
           await ctx.sync();
@@ -271,8 +378,11 @@
           const { paras, cp } = await readClauses(ctx);
           const c = locate(cp, f.c || f.b);
           if (c) {
-            clauseRange(paras, c).getTrackedChanges().rejectAll();
+            const tc = clauseRange(paras, c).getTrackedChanges();
+            tc.load("items");
             await ctx.sync();
+            if (tc.items.length) { tc.rejectAll(); await ctx.sync(); note = "Decision undone. The supplier's wording is back."; }
+            else note = "Decision undone in the panel, but no tracked change was found in this clause. If OMV's wording is still there, click it and use Review → Reject.";
           } else {
             note = "Decision undone in the panel. Couldn't find the clause, so please undo the tracked change yourself: Review → Reject.";
           }
@@ -282,11 +392,13 @@
       }
     });
     decisions[i] = null;
-    showResult();
+    if (proposing === i) proposing = null;
+    addLog(f, "Go back", `Undid ${ACT_LABEL[d.k]}`);
+    showResult(); renderRules();
     status(note);
   }
 
-  // ---------------- the panel ----------------
+  // ---------------- the changes tab ----------------
   // Word-by-word difference: deleted OMV words struck through, supplier's words underlined.
   function diffHtml(f) {
     if (!f.b) return `<ins>${esc(f.c.body)}</ins>`;
@@ -308,8 +420,19 @@
     return out.join(" ").replace(/<\/del> <del>/g, " ").replace(/<\/ins> <ins>/g, " ");
   }
 
+  // The short "when the supplier…" text for a rule proposal.
+  function changeSummary(f) {
+    if (!f.b) return `adds a new clause "${f.head}"`;
+    if (!f.c) return `deletes clause ${f.b.num} (${f.head})`;
+    const d = CG.sentenceDiff(f.b.paras, f.c.paras);
+    if (!d.omv.length) return `adds "${d.supplier.join(" ")}"`;
+    if (!d.supplier.length) return `deletes "${d.omv.join(" ")}"`;
+    return `changes "${d.omv.join(" ")}" to "${d.supplier.join(" ")}"`;
+  }
+
   function showResult() {
     const R = review;
+    if (!R) return;
     const n = R.findings.length;
     const nd = decisions.filter(Boolean).length;
     const cnt = { escalate: 0, reject: 0, review: 0, accept: 0 };
@@ -331,32 +454,81 @@
       const rec = f.a === "review" ? null : f.a;
       const tag = f.cosmetic ? "Wording only" : f.a === "review" ? "No rule: you decide" : "Suggest: " + CG.suggestion(f);
       h += `<div class="item l-${PILL[f.a]}${d ? " decided" : ""}" data-i="${i}" title="Click to show in the document">`;
-      h += `<div class="top" data-i="${i}" title="Show in document"><div class="h">${esc((f.c || f.b).num)}. ${esc(f.head)}</div><span class="tag ${PILL[f.a]}">${esc(tag)}</span></div>`;
+      h += `<div class="top"><div class="h">${esc((f.c || f.b).num)}. ${esc(f.head)}</div><span class="tag ${PILL[f.a]}">${esc(tag)}</span></div>`;
       h += `<div class="w">${esc(f.why)}</div>`;
+      h += `<div class="links">`;
       if (!f.cosmetic) h += `<details><summary>Show the change</summary><div class="diff">${diffHtml(f)}</div><div class="legend"><del>OMV wording removed</del> <ins>supplier's wording</ins></div></details>`;
+      if (f.rule) h += `<a href="#" class="rulelink" data-id="${f.rule.id}">Rule ${esc(f.rule.id)} ›</a>`;
+      h += `</div>`;
+
       if (d) {
-        h += `<div class="done d-${d.k}">${esc(d.text)}</div><button class="undo" data-i="${i}">↩ Go back</button>`;
+        h += `<div class="done d-${d.k}">${esc(d.text)}${d.note ? `<div class="note">Reason: ${esc(d.note)}</div>` : ""}</div>`;
+        if (d.k === "escalate") {
+          const m = escalationMail(f, d.note);
+          h += `<a class="mini" href="${m.href}" target="_blank" rel="noopener">✉ Email draft to ${esc(m.who)}</a>`;
+        }
+        h += `<div class="after"><button class="undo" data-i="${i}">↩ Go back</button>`;
+        if (!d.auto && (f.a === "review" || (rec && d.k !== rec))) h += `<button class="undo propose" data-i="${i}">✎ Propose a rule</button>`;
+        h += `</div>`;
+        if (proposing === i) {
+          const should = ACT_LABEL[d.k] + (d.k === "escalate" ? " to " : "");
+          h += `<div class="form" data-i="${i}"><div class="ft">Propose a rule to ${esc(CG.RULEBOOK_OWNER.name)}. It only goes live after Legal approves it.</div>
+            <label>When the supplier…<textarea class="p-when" rows="3">${esc(changeSummary(f))}</textarea></label>
+            <label>ContractGuard should suggest<input class="p-should" value="${esc(should)}"></label>
+            <label>Because<textarea class="p-because" rows="2" placeholder="Why this is OMV's position">${esc(d.note || "")}</textarea></label>
+            <div class="fbtns"><a class="mini send" href="#" target="_blank" rel="noopener">Send to Legal Ops</a><button class="undo cancel">Cancel</button></div></div>`;
+        }
+      } else if (pending && pending.i === i) {
+        h += `<div class="form why"><div class="ft">You're choosing <b>${ACT_LABEL[pending.k]}</b> instead of the suggested <b>${CG.LABEL[rec]}</b>. Why? (optional: goes into the comment and the log)</div>
+          <textarea rows="2" placeholder="e.g. long-term supplier, agreed in the last negotiation"></textarea>
+          <div class="fbtns"><button class="act rec confirm">${ACT_LABEL[pending.k]}</button><button class="undo cancel">Cancel</button></div></div>`;
       } else {
         h += `<div class="acts">` + ACTIONS.map((a) => `<button class="act${a.k === rec ? " rec" : ""}" data-i="${i}" data-k="${a.k}"${busy ? " disabled" : ""}>${a.label}</button>`).join("") + `</div>`;
       }
       h += `</div>`;
     });
     $("result").innerHTML = h;
-    // Click anywhere on a change (except its buttons) to jump to it in the document.
-    $("result").querySelectorAll(".item").forEach((el) => {
+    wireResult();
+  }
+
+  function wireResult() {
+    const R = review, root = $("result");
+    // Click anywhere on a change (except its buttons and forms) to jump to it in the document.
+    root.querySelectorAll(".item").forEach((el) => {
       el.onclick = (e) => {
-        if (e.target.closest("button, summary, a")) return;
-        $("result").querySelectorAll(".item.active").forEach((x) => x.classList.remove("active"));
-        el.classList.add("active");
-        guarded(() => jumpTo(R.findings[+el.dataset.i]));
+        if (e.target.closest("button, summary, a, textarea, input, label, .form")) return;
+        const i = +el.dataset.i;
+        focusCard(i, false);
+        guarded(() => jumpTo(R.findings[i]));
       };
     });
-    $("result").querySelectorAll(".undo").forEach((el) => {
-      el.onclick = () => guarded(() => undo(+el.dataset.i));
-    });
-    $("result").querySelectorAll(".act").forEach((el) => {
-      el.onclick = () => guarded(() => decide(+el.dataset.i, el.dataset.k));
-    });
+    root.querySelectorAll(".rulelink").forEach((a) => (a.onclick = (e) => { e.preventDefault(); openRule(a.dataset.id); }));
+    root.querySelectorAll(".act[data-k]").forEach((el) => (el.onclick = () => choose(+el.dataset.i, el.dataset.k)));
+    root.querySelectorAll(".undo[data-i]:not(.propose)").forEach((el) => (el.onclick = () => guarded(() => undo(+el.dataset.i))));
+    root.querySelectorAll(".propose").forEach((el) => (el.onclick = () => { proposing = +el.dataset.i; showResult(); }));
+    const why = root.querySelector(".why");
+    if (why) {
+      why.querySelector(".confirm").onclick = () => { const p = pending, note = why.querySelector("textarea").value.trim(); guarded(() => decide(p.i, p.k, note)); };
+      why.querySelector(".cancel").onclick = () => { pending = null; showResult(); };
+    }
+    const form = root.querySelector(".form[data-i]");
+    if (form) {
+      const i = +form.dataset.i, f = R.findings[i], send = form.querySelector(".send");
+      const update = () => { send.href = proposalMail(f, decisions[i], form.querySelector(".p-when").value, form.querySelector(".p-should").value, form.querySelector(".p-because").value); };
+      form.querySelectorAll("textarea, input").forEach((x) => (x.oninput = update));
+      update();
+      send.onclick = () => { addLog(f, "Rule proposed", form.querySelector(".p-should").value + " · " + form.querySelector(".p-because").value); proposing = null; setTimeout(showResult, 0); status("Rule proposal opened in your e-mail. Send it to Legal Ops."); };
+      form.querySelector(".cancel").onclick = () => { proposing = null; showResult(); };
+    }
+  }
+
+  // Highlight a change card (and its rule), optionally scrolling the panel to it.
+  function focusCard(i, scroll) {
+    document.querySelectorAll("#result .item.active").forEach((x) => x.classList.remove("active"));
+    const el = document.querySelector(`#result .item[data-i="${i}"]`);
+    if (el) { el.classList.add("active"); if (scroll) el.scrollIntoView({ block: "nearest", behavior: "smooth" }); }
+    const f = review && review.findings[i];
+    if (f && f.rule && f.rule.id !== currentRule) { currentRule = f.rule.id; renderRules(); }
   }
 
   // Scroll the document to a change and select the changed words (or the changed paragraph).
@@ -371,4 +543,27 @@
     });
   }
 
+  // ---------------- follow the cursor in the document ----------------
+  let selTimer = null;
+  function onSelection() {
+    clearTimeout(selTimer);
+    selTimer = setTimeout(() => {
+      if (busy || !lastCp) return;
+      Word.run(async (ctx) => {
+        const p = ctx.document.getSelection().paragraphs.getFirst();
+        p.load("text");
+        await ctx.sync();
+        const t = (p.text || "").trim();
+        if (!t) return;
+        const c = lastCp.find((x) => `${x.num} ${x.head}` === t || `${x.num}. ${x.head}` === t || x.head === t) || lastCp.find((x) => x.paras.includes(t));
+        if (!c) return;
+        const rule = CG.findRule(c.head);
+        if (review) {
+          const i = review.findings.findIndex((f) => f.c && norm(f.c.head) === norm(c.head));
+          if (i >= 0 && tab === "changes") focusCard(i, true);
+        }
+        if (rule && rule.id !== currentRule) { currentRule = rule.id; renderRules(); if (tab === "rules") scrollToRule(); }
+      }).catch(() => {});
+    }, 250);
+  }
 })();

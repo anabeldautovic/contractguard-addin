@@ -80,6 +80,22 @@
       } },
   ];
 
+  // Plain-language summary of each rule, shown in the panel's Rulebook tab.
+  const OUTCOMES = {
+    "R-PAY-01": ["Fewer than 60 days → Escalate to Finance / Procurement (a money question, not a legal one)", "More than 60 days → Accept (favours OMV)", "60-day period gone → Reject"],
+    "R-WAR-01": ["Shorter than 2 years (movables) or 3 years (immovables) → Reject", "Longer → Accept (favours OMV)", "Periods gone or reworded → Reject"],
+    "R-INS-01": ["“Proportionate” cover or proof of insurance removed → Reject"],
+    "R-LIA-01": ["Any cap or exclusion of liability → Escalate to a senior lawyer", "Basic liability sentence changed → Escalate to a senior lawyer"],
+    "R-CONF-01": ["End date added → Reject", "No longer survives the end of the contract → Reject", "Supplier may talk about the contract without OMV's consent → Reject"],
+    "R-COMP-01": ["Any change at all → Escalate to Compliance"],
+    "R-LAW-01": ["Not Austrian law, or the UN sales convention no longer excluded → Escalate to a senior lawyer"],
+    "R-JUR-01": ["Not the Vienna court, or no longer exclusive → Escalate to a senior lawyer"],
+    "R-AMD-01": ["Plain e-mail counts as “in writing” → Reject", "Signature requirement removed → Reject"],
+  };
+  // Who gets an escalation. Placeholder addresses: OMV's real ones would go here.
+  const CONTACTS = { "Finance / Procurement": "finance-review@omv.example", "Senior lawyer": "senior-legal@omv.example", "Compliance": "compliance-review@omv.example" };
+  const RULEBOOK_OWNER = { name: "Legal Ops (rulebook owner)", email: "legal-ops@omv.example" };
+
   // What ContractGuard suggests. Same words as the buttons in the panel.
   // "review" = no approved rule covers the change, so ContractGuard makes no suggestion.
   const LABEL = { escalate: "Escalate", reject: "Reject", review: "You decide", accept: "Accept" };
@@ -246,5 +262,5 @@
     return L.join("\n");
   }
 
-  root.ContractGuard = { RULEBOOK_VERSION, TEMPLATE_NAME, OMV_STANDARD, diffSeq, RULES, LABEL, TAG, isOurs, suggestion, splitClauses, review, commentText, diffWords };
+  root.ContractGuard = { RULEBOOK_VERSION, TEMPLATE_NAME, OMV_STANDARD, diffSeq, RULES, OUTCOMES, CONTACTS, RULEBOOK_OWNER, findRule, sentenceDiff, LABEL, TAG, isOurs, suggestion, splitClauses, review, commentText, diffWords };
 })(typeof window !== "undefined" ? window : globalThis);

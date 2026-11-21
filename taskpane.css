@@ -48,3 +48,32 @@ del{color:var(--esc);background:var(--esc-bg);text-decoration:line-through}
 ins{color:var(--ok);background:var(--ok-bg);text-decoration:underline}
 .legend{margin-top:3px;font-size:10.5px;color:var(--muted)}
 .gap{color:var(--muted);padding:0 2px}
+.muted{color:var(--muted);font-size:12px}
+.tabs{display:flex;border-bottom:1px solid var(--line);margin:8px 0 8px}
+.tab{font:inherit;font-size:12.5px;background:none;border:0;border-bottom:2px solid transparent;padding:6px 10px;margin-bottom:-1px;color:var(--muted);cursor:pointer}
+.tab.on{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
+[hidden]{display:none!important}
+.links{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:4px 10px}
+.links details{flex:1 1 100%}
+.rulelink{font-size:11.5px}
+.note{font-weight:400;font-size:11.5px;margin-top:2px}
+.after{display:flex;gap:14px}
+.mini{display:inline-block;margin-top:6px;font-size:12px;padding:4px 9px;border:1px solid #9cc3cb;background:#e8f2f4;border-radius:4px;color:var(--accent);text-decoration:none}
+.mini:hover{border-color:var(--accent)}
+.form{margin-top:7px;padding:8px;border:1px solid #9cc3cb;background:#f4f9fa;border-radius:4px;cursor:default}
+.form .ft{font-size:12px;margin-bottom:5px}
+.form label{display:block;font-size:11.5px;color:var(--muted);margin-top:5px}
+.form textarea,.form input{display:block;width:100%;font:inherit;font-size:12px;padding:4px 6px;border:1px solid var(--line);border-radius:4px;margin-top:2px;color:var(--ink);background:#fff}
+.fbtns{display:flex;align-items:center;gap:12px;margin-top:6px}
+.fbtns .act{flex:0 0 auto;padding:5px 12px}
+.rbhead{font-size:12px;color:var(--muted);margin-bottom:8px}
+.rbhead b{color:var(--ink)}
+.rule{border:1px solid var(--line);border-radius:4px;padding:7px 9px;margin-bottom:6px;font-size:12px}
+.rule.cur{border-color:var(--accent);box-shadow:0 0 0 2px #9cc3cb}
+.rid{font-weight:600;font-size:12.5px}.rid span{font-weight:400;color:var(--muted)}
+.rule ul{margin:4px 0 0;padding-left:16px}
+.rstd{margin-top:2px}
+.used{margin-top:5px;padding-top:5px;border-top:1px dashed var(--line)}
+.logt{width:100%;border-collapse:collapse;font-size:11.5px}
+.logt th,.logt td{text-align:left;vertical-align:top;padding:4px 4px;border-bottom:1px solid var(--line)}
+.logt th{color:var(--muted);font-weight:600}
