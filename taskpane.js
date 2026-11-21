@@ -84,14 +84,41 @@
     return r;
   }
 
-  // Search for the words the supplier added, so they can be highlighted yellow.
+  // Paragraphs of the supplier's clause that differ from OMV's text.
+  function changedParaIdx(c, f) {
+    const omv = new Set(f.b ? f.b.paras : []);
+    return c.bodyIdx.filter((_, k) => !omv.has(c.paras[k]));
+  }
+
+  // Where a comment goes: only the changed text, not the whole clause.
+  //  - the supplier's added words (from the first to the last one found), or
+  //  - the changed paragraph (when words were only removed), or
+  //  - the paragraph just before a deleted paragraph, or
+  //  - for a deleted clause: the next clause heading; for a new clause: the whole new clause.
+  function anchorRange(paras, cp, f, c, res) {
+    if (!f.b && c) return clauseRange(paras, c);
+    if (!c) {
+      const next = CG.OMV_STANDARD.slice(CG.OMV_STANDARD.indexOf(f.b) + 1).map((x) => locate(cp, x)).find(Boolean);
+      return (next ? paras.items[next.headIdx] : paras.items[0]).getRange("Whole");
+    }
+    const hits = res.filter((r) => r.items.length).map((r) => r.items[0]);
+    if (hits.length) return hits.length > 1 ? hits[0].expandTo(hits[hits.length - 1]) : hits[0];
+    const idx = changedParaIdx(c, f);
+    if (idx.length) return paras.items[idx[0]].getRange("Whole");
+    let before = c.headIdx, j = 0;
+    for (const o of CG.diffSeq(f.b.paras, c.paras)) { if (o.t === "-") break; before = c.bodyIdx[j++]; }
+    return paras.items[before].getRange("Whole");
+  }
+
+  // Search for the words the supplier added (only in changed paragraphs), to highlight them and anchor the comment.
   function findAdded(paras, c, f) {
     const out = [];
     if (!f.changes || f.cosmetic) return out;
+    const changed = changedParaIdx(c, f);
     for (const phrase of f.changes.added) {
       const p = phrase.replace(/[.,;:]+$/, "");
-      if (!p || p.length > 250) continue;
-      for (const idx of c.bodyIdx) {
+      if (p.length < 2 || p.length > 250) continue;
+      for (const idx of changed) {
         const res = paras.items[idx].search(p, { matchCase: true });
         res.load("items");
         out.push(res);
@@ -113,21 +140,18 @@
       status("Comparing with the OMV standard…");
       const R = CG.review(CG.OMV_STANDARD, cp);
 
-      // Write comments and queue highlight searches
-      const searches = [], comments = [];
-      for (const f of R.findings) {
-        // A deleted clause gets its comment on the next OMV clause still in the document (or the title).
-        const next = f.c ? null : CG.OMV_STANDARD.slice(CG.OMV_STANDARD.indexOf(f.b) + 1).map((x) => locate(cp, x)).find(Boolean);
-        const range = f.c ? clauseRange(paras, f.c) : next ? paras.items[next.headIdx].getRange("Whole") : paras.items[0].getRange("Whole");
-        if (f.c) searches.push(...findAdded(paras, f.c, f));
-        const cm = range.insertComment(CG.commentText(f));
+      // First find the supplier's added words, then put each comment on just the changed text.
+      const found = R.findings.map((f) => (f.c ? findAdded(paras, f.c, f) : []));
+      await ctx.sync();
+      const comments = R.findings.map((f, i) => {
+        const cm = anchorRange(paras, cp, f, f.c, found[i]).insertComment(CG.commentText(f));
         if (f.cosmetic) cm.resolved = true; // wording-only changes are accepted automatically
         cm.load("id");
-        comments.push(cm);
-      }
+        return cm;
+      });
+      found.flat().forEach((res) => { if (res.items.length) res.items[0].font.highlightColor = "Yellow"; });
       await ctx.sync();
       R.findings.forEach((f, i) => (f.commentId = comments[i].id));
-      searches.forEach((res) => { if (res.items.length) res.items[0].font.highlightColor = "Yellow"; });
       await ctx.sync();
 
       review = R;
@@ -340,23 +364,9 @@
     await Word.run(async (ctx) => {
       const { paras, cp } = await readClauses(ctx);
       const c = f.c ? locate(cp, f.c) : null;
-      if (!c) {
-        // Deleted clause: go to where it used to be (the next OMV clause still in the document).
-        const pos = CG.OMV_STANDARD.indexOf(f.b);
-        const next = CG.OMV_STANDARD.slice(pos + 1).map((x) => locate(cp, x)).find(Boolean);
-        (next ? paras.items[next.headIdx] : paras.items[0]).select();
-        await ctx.sync();
-        return;
-      }
-      const res = findAdded(paras, c, f);
+      const res = c ? findAdded(paras, c, f) : [];
       await ctx.sync();
-      const hit = res.find((r) => r.items.length);
-      if (hit) hit.items[0].select();
-      else {
-        const omv = new Set(f.b ? f.b.paras : []);
-        const k = c.paras.findIndex((t) => !omv.has(t));
-        (k >= 0 ? paras.items[c.bodyIdx[k]] : paras.items[c.headIdx]).select();
-      }
+      anchorRange(paras, cp, f, c, res).select();
       await ctx.sync();
     });
   }
