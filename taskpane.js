@@ -117,12 +117,12 @@
     try { const u = Office.context.document.url || ""; return decodeURIComponent(u.split(/[\\/]/).pop().split("?")[0]) || "the supplier's contract"; }
     catch (e) { return "the supplier's contract"; }
   }
-  function escalationMail(f, note) {
-    const who = f.to || "Senior lawyer";
+  function escalationMail(f, note, to) {
+    const who = to || "";
     const subject = `ContractGuard escalation: clause ${(f.c || f.b).num} ${f.head} (${docName()})`;
     const body = `Hello,\n\nplease decide on this change in ${docName()}:\n\n` + CG.commentText(f).split("\n").slice(2).join("\n") +
       (note ? `\n\nNote from the reviewing lawyer: ${note}` : "") + `\n\nThe Word comment on this clause stays open until it's decided.\n`;
-    return { who, href: mailto(CG.CONTACTS[who] || CG.CONTACTS["Senior lawyer"], subject, body) };
+    return { who, href: mailto(CG.CONTACTS[who] || "", subject, body) };
   }
   function proposalMail(f, d, when, should, because) {
     const subject = `ContractGuard: rule proposal for clause ${(f.c || f.b).num} ${f.head}`;
@@ -260,15 +260,19 @@
     return cs.items.find((c) => c.id === f.commentId) || null;
   }
 
-  // A lawyer clicks a button. If it's not what ContractGuard suggested, ask "why?" first.
+  // A lawyer clicks a button. Escalate asks "to whom?"; choosing something other than the suggestion asks "why?".
   function choose(i, k) {
     const f = review.findings[i];
     const rec = f.a === "review" ? null : f.a;
-    if (rec && k !== rec) { pending = { i, k }; showResult(); const t = document.querySelector(".why textarea"); if (t) t.focus(); return; }
-    guarded(() => decide(i, k, ""));
+    if (k === "escalate" || (rec && k !== rec)) {
+      pending = { i, k }; showResult();
+      const t = document.querySelector(".why input, .why textarea"); if (t) t.focus();
+      return;
+    }
+    guarded(() => decide(i, k, "", ""));
   }
 
-  async function decide(i, k, note) {
+  async function decide(i, k, note, to) {
     const f = review.findings[i];
     const rec = f.a === "review" ? null : f.a;
     const over = rec && k !== rec ? ` (suggested: ${CG.LABEL[rec]})` : "";
@@ -330,16 +334,17 @@
       }
 
       else if (k === "escalate") {
-        if (cm) reply = cm.reply(`⚑ Escalated.${over}${why}`);
-        text = "Escalated. The comment stays open.";
+        const toWhom = to ? ` to ${to}` : "";
+        if (cm) reply = cm.reply(`⚑ Escalated${toWhom}.${over}${why}`);
+        text = `Escalated${toWhom}. The comment stays open.`;
       }
 
       if (reply) reply.load("id");
       await ctx.sync();
-      decisions[i] = { k, text, note, replyId: reply ? reply.id : null };
+      decisions[i] = { k, text, note, to, replyId: reply ? reply.id : null };
     });
     pending = null;
-    addLog(f, ACT_LABEL[k], note);
+    addLog(f, ACT_LABEL[k], [to ? `To: ${to}` : "", note].filter(Boolean).join(" · "));
     showResult(); renderRules();
     const n = decisions.filter(Boolean).length;
     status(n === decisions.length ? "All changes decided." : `${n} of ${decisions.length} decided.`);
@@ -464,8 +469,8 @@
       if (d) {
         h += `<div class="done d-${d.k}">${esc(d.text)}${d.note ? `<div class="note">Reason: ${esc(d.note)}</div>` : ""}</div>`;
         if (d.k === "escalate") {
-          const m = escalationMail(f, d.note);
-          h += `<a class="mini" href="${m.href}" target="_blank" rel="noopener">✉ Email draft to ${esc(m.who)}</a>`;
+          const m = escalationMail(f, d.note, d.to);
+          h += `<a class="mini" href="${m.href}" target="_blank" rel="noopener">✉ Email draft${m.who ? " to " + esc(m.who) : ""}</a>`;
         }
         h += `<div class="after"><button class="undo" data-i="${i}">↩ Go back</button>`;
         if (!d.auto && (f.a === "review" || (rec && d.k !== rec))) h += `<button class="undo propose" data-i="${i}">✎ Propose a rule</button>`;
@@ -479,9 +484,15 @@
             <div class="fbtns"><a class="mini send" href="#" target="_blank" rel="noopener">Send to Legal Ops</a><button class="undo cancel">Cancel</button></div></div>`;
         }
       } else if (pending && pending.i === i) {
-        h += `<div class="form why"><div class="ft">You're choosing <b>${ACT_LABEL[pending.k]}</b> instead of the suggested <b>${CG.LABEL[rec]}</b>. Why? (optional: goes into the comment and the log)</div>
-          <textarea rows="2" placeholder="e.g. long-term supplier, agreed in the last negotiation"></textarea>
-          <div class="fbtns"><button class="act rec confirm">${ACT_LABEL[pending.k]}</button><button class="undo cancel">Cancel</button></div></div>`;
+        const isEsc = pending.k === "escalate", isOver = rec && pending.k !== rec;
+        h += `<div class="form why">`;
+        if (isOver) h += `<div class="ft">You're choosing <b>${ACT_LABEL[pending.k]}</b> instead of the suggested <b>${CG.LABEL[rec]}</b>.</div>`;
+        if (isEsc) {
+          h += `<label>Escalate to whom?<input class="p-to" placeholder="Name or team"></label>`;
+          h += `<div class="chips">` + Object.keys(CG.CONTACTS).map((n) => `<button class="chip" type="button">${esc(n)}</button>`).join("") + `</div>`;
+        }
+        h += `<label>${isOver ? "Why? (optional: goes into the comment and the log)" : "Note (optional)"}<textarea rows="2" placeholder="${isOver ? "e.g. long-term supplier, agreed in the last negotiation" : "e.g. please decide by Friday"}"></textarea></label>`;
+        h += `<div class="fbtns"><button class="act rec confirm">${ACT_LABEL[pending.k]}</button><button class="undo cancel">Cancel</button></div></div>`;
       } else {
         h += `<div class="acts">` + ACTIONS.map((a) => `<button class="act${a.k === rec ? " rec" : ""}" data-i="${i}" data-k="${a.k}"${busy ? " disabled" : ""}>${a.label}</button>`).join("") + `</div>`;
       }
@@ -508,7 +519,12 @@
     root.querySelectorAll(".propose").forEach((el) => (el.onclick = () => { proposing = +el.dataset.i; showResult(); }));
     const why = root.querySelector(".why");
     if (why) {
-      why.querySelector(".confirm").onclick = () => { const p = pending, note = why.querySelector("textarea").value.trim(); guarded(() => decide(p.i, p.k, note)); };
+      const toBox = why.querySelector(".p-to");
+      why.querySelectorAll(".chip").forEach((c) => (c.onclick = () => { toBox.value = c.textContent; why.querySelectorAll(".chip").forEach((x) => x.classList.toggle("on", x === c)); }));
+      why.querySelector(".confirm").onclick = () => {
+        const p = pending, note = why.querySelector("textarea").value.trim(), to = toBox ? toBox.value.trim() : "";
+        guarded(() => decide(p.i, p.k, note, to));
+      };
       why.querySelector(".cancel").onclick = () => { pending = null; showResult(); };
     }
     const form = root.querySelector(".form[data-i]");

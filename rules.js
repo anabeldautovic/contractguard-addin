@@ -26,7 +26,7 @@
       test(t) {
         const d = num(t, /(\d+)\)?\s*(?:calendar\s+)?days\s+(?:from|after)\s+(?:the\s+)?receipt/i);
         if (d === null) return { a: "counter", why: "Couldn't find the 60-day payment period any more. Put OMV's wording back, or read the clause." };
-        if (d < 60) return { a: "route", to: "Finance / Procurement", why: `Payment period is ${d} days instead of 60. Paying ${60 - d} days earlier costs OMV working capital, so this is a money decision for Finance or Procurement, not a legal one.` };
+        if (d < 60) return { a: "route", to: "Finance / Procurement", why: `Payment period is ${d} days instead of 60. Paying ${60 - d} days earlier costs OMV working capital, so this is a commercial decision rather than a legal one.` };
         if (d > 60) return { a: "ok", why: `Payment period is ${d} days, longer than the standard 60. This favours OMV.` };
         return { a: "same", why: "The payment period is still 60 days." };
       } },
@@ -47,8 +47,8 @@
     { id: "R-LIA-01", keys: ["liability"], scope: /./, standard: "The Contractor is liable for all damage; no cap and no exclusions.", source: SRC("8"),
       test(t, omv) {
         const CAP = /(shall not exceed|limited to|\bcap(ped)?\b|maximum (aggregate |total )?liability|in no event|not be liable|exclud\w*[^.]*(liabilit|damage)|indirect|consequential)/i;
-        if (CAP.test(t) && !CAP.test(omv)) return { a: "esc", to: "Senior lawyer", why: "The supplier caps or excludes its liability. OMV's standard has no cap, so a senior lawyer decides." };
-        if (!/liable for any damages/i.test(t)) return { a: "esc", to: "Senior lawyer", why: "The basic liability sentence was changed. A senior lawyer decides." };
+        if (CAP.test(t) && !CAP.test(omv)) return { a: "esc", to: "Senior lawyer", why: "The supplier caps or excludes its liability. OMV's standard has no cap." };
+        if (!/liable for any damages/i.test(t)) return { a: "esc", to: "Senior lawyer", why: "The basic liability sentence was changed." };
         return { a: "same", why: "Liability is still unlimited." };
       } },
     { id: "R-CONF-01", keys: ["confidential"], scope: /./, standard: "Confidential with no end date; disclosing the contract needs OMV's consent; survives termination.", source: SRC("14"),
@@ -59,17 +59,17 @@
         if (!/existence, content or progress/i.test(t)) return { a: "counter", why: "The supplier could now talk about the contract without OMV's consent. Reject to put OMV's wording back." };
         return { a: "same", why: "Confidentiality still has no end date." };
       } },
-    { id: "R-COMP-01", keys: ["code of conduct", "sanctions"], scope: /./, standard: "Code of Conduct and sanctions duties: every change goes to Compliance.", source: SRC("16-17"),
-      test() { return { a: "esc", to: "Compliance", why: "The supplier changed a Code of Conduct or sanctions duty. Compliance must look at every change here." }; } },
+    { id: "R-COMP-01", keys: ["code of conduct", "sanctions"], scope: /./, standard: "Code of Conduct and sanctions duties stay as they are.", source: SRC("16-17"),
+      test() { return { a: "esc", to: "Compliance", why: "The supplier changed a Code of Conduct or sanctions duty. Every change here is escalated." }; } },
     { id: "R-LAW-01", keys: ["applicable law"], scope: /./, standard: "Austrian law, UN sales convention (CISG) excluded.", source: SRC("19"),
       test(t) {
         if (/law of austria|austrian law/i.test(t) && /(convention on contracts for the inter-?national sales? of goods|cisg)[^.]*excluded/i.test(t)) return { a: "same", why: "Still Austrian law, CISG excluded." };
-        return { a: "esc", to: "Senior lawyer", why: "The supplier changed the governing law. This needs a senior lawyer." };
+        return { a: "esc", to: "Senior lawyer", why: "The supplier changed the governing law." };
       } },
     { id: "R-JUR-01", keys: ["jurisdiction"], scope: /./, standard: "Exclusive jurisdiction of the court for Vienna, Inner City.", source: SRC("20"),
       test(t) {
         if (/vienna/i.test(t) && /exclusive jurisdiction/i.test(t)) return { a: "same", why: "Still the Vienna court, exclusively." };
-        return { a: "esc", to: "Senior lawyer", why: "The supplier changed the court for disputes. This needs a senior lawyer." };
+        return { a: "esc", to: "Senior lawyer", why: "The supplier changed the court for disputes." };
       } },
     { id: "R-AMD-01", keys: ["amendment"], scope: /./, standard: "Amendments only in signed writing (DocuSign counts). Plain e-mail does not count.", source: SRC("22"),
       test(t) {
@@ -82,17 +82,18 @@
 
   // Plain-language summary of each rule, shown in the panel's Rulebook tab.
   const OUTCOMES = {
-    "R-PAY-01": ["Fewer than 60 days → Escalate to Finance / Procurement (a money question, not a legal one)", "More than 60 days → Accept (favours OMV)", "60-day period gone → Reject"],
+    "R-PAY-01": ["Fewer than 60 days → Escalate (a commercial question, not a legal one)", "More than 60 days → Accept (favours OMV)", "60-day period gone → Reject"],
     "R-WAR-01": ["Shorter than 2 years (movables) or 3 years (immovables) → Reject", "Longer → Accept (favours OMV)", "Periods gone or reworded → Reject"],
     "R-INS-01": ["“Proportionate” cover or proof of insurance removed → Reject"],
-    "R-LIA-01": ["Any cap or exclusion of liability → Escalate to a senior lawyer", "Basic liability sentence changed → Escalate to a senior lawyer"],
+    "R-LIA-01": ["Any cap or exclusion of liability → Escalate", "Basic liability sentence changed → Escalate"],
     "R-CONF-01": ["End date added → Reject", "No longer survives the end of the contract → Reject", "Supplier may talk about the contract without OMV's consent → Reject"],
-    "R-COMP-01": ["Any change at all → Escalate to Compliance"],
-    "R-LAW-01": ["Not Austrian law, or the UN sales convention no longer excluded → Escalate to a senior lawyer"],
-    "R-JUR-01": ["Not the Vienna court, or no longer exclusive → Escalate to a senior lawyer"],
+    "R-COMP-01": ["Any change at all → Escalate"],
+    "R-LAW-01": ["Not Austrian law, or the UN sales convention no longer excluded → Escalate"],
+    "R-JUR-01": ["Not the Vienna court, or no longer exclusive → Escalate"],
     "R-AMD-01": ["Plain e-mail counts as “in writing” → Reject", "Signature requirement removed → Reject"],
   };
-  // Who gets an escalation. Placeholder addresses: OMV's real ones would go here.
+  // Quick picks when a lawyer escalates (the lawyer chooses; ContractGuard doesn't suggest who).
+  // Placeholder addresses: OMV's real ones would go here.
   const CONTACTS = { "Finance / Procurement": "finance-review@omv.example", "Senior lawyer": "senior-legal@omv.example", "Compliance": "compliance-review@omv.example" };
   const RULEBOOK_OWNER = { name: "Legal Ops (rulebook owner)", email: "legal-ops@omv.example" };
 
