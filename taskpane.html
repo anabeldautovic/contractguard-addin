@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ContractGuard</title>
+<script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+<script src="rules.js"></script>
+<style>
+  :root{--bg:#fff;--ink:#18232e;--muted:#5b6b7a;--line:#d5dde5;--accent:#0f5e6e;
+    --ok:#2e7d4f;--ok-bg:#e3f2e8;--route:#2f5fa8;--route-bg:#e4ecf8;--counter:#9a5b00;--counter-bg:#fbefd9;--esc:#b3261e;--esc-bg:#fbe5e3;--same-bg:#eceff2}
+  *{box-sizing:border-box}
+  body{margin:0;padding:14px;font:13px/1.45 "Segoe UI",system-ui,sans-serif;background:var(--bg);color:var(--ink)}
+  h1{font-size:16px;margin:0 0 2px;color:var(--accent)}
+  .sub{color:var(--muted);font-size:11.5px;margin:0 0 12px}
+  .btn{display:block;width:100%;font:inherit;font-weight:600;padding:9px;border-radius:4px;border:1px solid var(--accent);background:var(--accent);color:#fff;cursor:pointer;margin-bottom:6px}
+  .btn.secondary{background:#fff;color:var(--accent);font-weight:400}
+  .btn:disabled{opacity:.5;cursor:default}
+  #status{font-size:12px;color:var(--muted);min-height:18px;margin:6px 0}
+  #status.err{color:var(--esc)}
+  .summary{border:1px solid var(--line);border-radius:6px;padding:10px;margin:8px 0}
+  .summary b{display:block;font-size:14px;margin-bottom:6px}
+  .pills{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px}
+  .pill{font-size:11px;font-weight:600;padding:2px 8px;border-radius:99px}
+  .ok{background:var(--ok-bg);color:var(--ok)}.route{background:var(--route-bg);color:var(--route)}
+  .counter{background:var(--counter-bg);color:var(--counter)}.esc{background:var(--esc-bg);color:var(--esc)}.same{background:var(--same-bg);color:var(--muted)}
+  .item{border:1px solid var(--line);border-left:4px solid var(--line);border-radius:4px;padding:7px 9px;margin-bottom:6px;cursor:pointer;background:#fff;width:100%;text-align:left;font:inherit;color:inherit}
+  .item:hover{border-color:var(--accent)}
+  .item.l-ok{border-left-color:var(--ok)}.item.l-route{border-left-color:var(--route)}.item.l-counter{border-left-color:var(--counter)}.item.l-esc{border-left-color:var(--esc)}
+  .item .h{font-weight:600}.item .w{font-size:12px;color:var(--muted)}
+  .foot{font-size:11px;color:var(--muted);margin-top:14px;border-top:1px solid var(--line);padding-top:8px}
+  a{color:var(--accent)}
+</style>
+</head>
+<body>
+  <h1>ContractGuard</h1>
+  <p class="sub">Checks the open contract against the OMV standard and adds a comment to each change. You decide every change.</p>
+
+  <button class="btn" id="run" disabled>Run review</button>
+  <button class="btn secondary" id="clear" disabled>Remove ContractGuard comments</button>
+  <div id="status">Loading…</div>
+  <div id="result"></div>
+
+  <div class="foot">
+    Practice version. Compares with a simplified OMV standard based on the public General Purchase Conditions (Nov 2025), using 8 draft rules not approved by OMV Legal. No AI model. The contract never leaves your computer.<br><br>
+    No contract to test with? <a href="samples/supplier-tough-round.docx" target="_blank" rel="noopener">Download a sample supplier version</a>.
+  </div>
+
+<script src="taskpane.js"></script>
+</body>
+</html>
