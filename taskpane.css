@@ -105,3 +105,6 @@ ins{color:var(--ok);background:var(--ok-bg);text-decoration:underline}
 /* Decided changes shrink to one line so the open ones stand out. */
 .item.decided .w,.item.decided .links,.item.decided .rulepop{display:none}
 .item.decided .done{margin-top:4px}
+.wordnote{margin:5px 0 2px;padding:5px 8px;border-radius:4px;font-size:12px;background:var(--counter-bg);color:var(--counter);font-weight:600}
+.wordnote.closed{background:var(--ok-bg);color:var(--ok)}
+.item.decided .wordnote{display:block}

@@ -48,6 +48,8 @@
     // Follow the cursor: when it moves into a clause, show that change and its rule.
     try { Office.context.document.addHandlerAsync(Office.EventType.DocumentSelectionChanged, onSelection); } catch (e) { console.warn(e); }
     Word.run(async (ctx) => { await readClauses(ctx); }).catch(() => {});
+    // Keep an eye on the comments: if someone resolves, reopens or deletes one in Word, show it here.
+    setInterval(watchComments, 4000);
   });
 
   async function guarded(fn) {
@@ -429,6 +431,45 @@
   }
 
   // ---------------- the three decisions ----------------
+  // ---------------- keep the panel and the Word comments in step ----------------
+  // What each comment should look like after the panel's decision: Accept and Reject resolve it,
+  // Escalate and "not decided yet" leave it open. Anything else was done in Word.
+  const WORD_NOTE = {
+    resolved: "⚠ Resolved in Word without a decision. Pick one below so it's recorded.",
+    closed: "✔ Resolved in Word after the escalation.",
+    reopened: "⚠ Reopened in Word. If that was meant to undo the decision, use Go back.",
+    deleted: "⚠ The comment was deleted in Word. The decision here still counts; run the review again to add the comment back.",
+  };
+  async function watchComments() {
+    if (!review || busy || pending !== null || proposing !== null) return;
+    let changed = false;
+    try {
+      await Word.run(async (ctx) => {
+        const cs = ctx.document.body.getComments();
+        cs.load("items/id,items/resolved");
+        await ctx.sync();
+        const byId = new Map(cs.items.map((c) => [c.id, c]));
+        review.findings.forEach((f, i) => {
+          const d = decisions[i], cm = byId.get(f.commentId);
+          const shouldBeResolved = !!d && (d.k === "accept" || d.k === "reject");
+          let state = "ok";
+          if (!cm) state = "deleted";
+          else if (cm.resolved && !shouldBeResolved) state = d && d.k === "escalate" ? "closed" : "resolved";
+          else if (!cm.resolved && shouldBeResolved) state = "reopened";
+          if ((f.word || "ok") !== state) {
+            if (state !== "ok") addLog(f, { resolved: "Resolved in Word", closed: "Resolved in Word", reopened: "Reopened in Word", deleted: "Comment deleted in Word" }[state], "Noticed by ContractGuard");
+            f.word = state; changed = true;
+          }
+        });
+      });
+    } catch (e) { console.warn("Couldn't check comments", e); }
+    if (changed) {
+      showResult();
+      const n = review.findings.filter((f) => f.word && f.word !== "ok" && f.word !== "closed").length;
+      if (n) status(`${n} change${n === 1 ? " was" : "s were"} changed directly in Word. See the ⚠ notes.`);
+    }
+  }
+
   async function getComment(ctx, f) {
     const cs = ctx.document.body.getComments();
     cs.load("items/id");
@@ -492,7 +533,7 @@
 
       else if (k === "escalate") {
         const toWhom = to ? ` to ${to}` : "";
-        if (cm) reply = cm.reply(`⚑ Escalated${toWhom}.${over}${why}`);
+        if (cm) { reply = cm.reply(`⚑ Escalated${toWhom}.${over}${why}`); cm.resolved = false; } // escalated = still open
         text = `Escalated${toWhom}. The comment stays open.`;
       }
 
@@ -503,6 +544,7 @@
     pending = null;
     addLog(f, ACT_LABEL[k], [to ? `To: ${to}` : "", note].filter(Boolean).join(" · "));
     showResult(); renderRules();
+    setTimeout(watchComments, 300);
     const n = decisions.filter(Boolean).length;
     status(n === decisions.length ? "All changes decided." : `${n} of ${decisions.length} decided.`);
   }
@@ -540,6 +582,7 @@
     if (proposing === i) proposing = null;
     addLog(f, "Go back", `Undid ${ACT_LABEL[d.k]}`);
     showResult(); renderRules();
+    setTimeout(watchComments, 300);
     status(note);
   }
 
@@ -670,6 +713,8 @@
     }
     h += `<div class="proof">✓ ${R.same.length} of ${R.total} clauses are word-for-word identical.${moved.length ? " Same wording, new number: " + esc(moved.join("; ")) + "." : ""}</div>`;
     if (n) h += `<div class="progress">${nd} of ${n} decided</div><div class="bar"><i style="width:${Math.round((100 * nd) / n)}%"></i></div>`;
+    const attention = R.findings.filter((f) => f.word && f.word !== "ok" && f.word !== "closed").length;
+    if (attention) h += `<div class="wordnote">⚠ ${attention} change${attention === 1 ? " was" : "s were"} changed directly in Word: see the notes below.</div>`;
     if (n) h += `<div class="sumacts"><a class="mini" href="${mailto("", `ContractGuard review: ${docName()}`, summaryText())}" target="_blank" rel="noopener">✉ Email summary</a><button class="undo copysum">Copy summary</button></div>`;
     h += `</div>`;
 
@@ -679,6 +724,7 @@
       const tag = f.cosmetic ? "Wording only" : f.a === "review" ? "No rule: you decide" : "Suggest: " + CG.suggestion(f);
       h += `<div class="item l-${PILL[f.a]}${d ? " decided" : ""}" data-i="${i}" title="Click to show in the document">`;
       h += `<div class="top"><div class="h">${esc((f.c || f.b).num)}. ${esc(f.head)}</div><span class="tag ${PILL[f.a]}">${esc(tag)}</span></div>`;
+      if (f.word && f.word !== "ok") h += `<div class="wordnote ${f.word}">${esc(WORD_NOTE[f.word])}</div>`;
       h += `<div class="w">${esc(f.why)}</div>`;
       h += `<div class="links">`;
       if (!f.cosmetic) h += `<details><summary>Show the change</summary><div class="diff">${diffHtml(f)}</div><div class="legend"><del>${f.label === "Previous round" ? "previous round" : "OMV"} wording removed</del> <ins>supplier's wording</ins></div></details>`;
