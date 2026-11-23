@@ -412,7 +412,6 @@
       await ctx.sync();
       const comments = R.findings.map((f, i) => {
         const cm = anchorRange(paras, cp, f, f.c, found[i]).insertComment(CG.commentText(f));
-        if (f.cosmetic) cm.resolved = true; // wording-only changes are accepted automatically
         cm.load("id");
         return cm;
       });
@@ -421,9 +420,8 @@
       R.findings.forEach((f, i) => (f.commentId = comments[i].id));
 
       review = R; pending = null; proposing = null;
-      decisions = R.findings.map((f) => f.cosmetic ? { k: "accept", auto: true, text: "Accepted automatically." } : null);
+      decisions = R.findings.map(() => null); // nothing is decided automatically
       addEvent("Review run", `Compared with ${b.name}${b.auto ? ` (detected, ${Math.round(m.share * m.avg * 100)}% match)` : ""}: ${R.findings.length} change${R.findings.length === 1 ? "" : "s"}, ${R.same.length} of ${R.total} clauses identical`);
-      R.findings.forEach((f) => { if (f.cosmetic) addLog(f, "Accept", "Automatic: wording only"); });
       showResult(); renderRules(); showTab("changes");
       const open = decisions.filter((d) => !d).length;
       status(R.findings.length ? `Done. ${open} change${open === 1 ? "" : "s"} for you to decide.` : `Done. No changes from ${b.short}.`);
@@ -721,7 +719,7 @@
     R.findings.forEach((f, i) => {
       const d = decisions[i];
       const rec = f.a === "review" ? null : f.a;
-      const tag = f.cosmetic ? "Wording only" : f.a === "review" ? "No rule: you decide" : "Suggest: " + CG.suggestion(f);
+      const tag = f.cosmetic ? "Suggest: Accept (wording only)" : f.a === "review" ? "No rule: you decide" : "Suggest: " + CG.suggestion(f);
       h += `<div class="item l-${PILL[f.a]}${d ? " decided" : ""}" data-i="${i}" title="Click to show in the document">`;
       h += `<div class="top"><div class="h">${esc((f.c || f.b).num)}. ${esc(f.head)}</div><span class="tag ${PILL[f.a]}">${esc(tag)}</span></div>`;
       if (f.word && f.word !== "ok") h += `<div class="wordnote ${f.word}">${esc(WORD_NOTE[f.word])}</div>`;

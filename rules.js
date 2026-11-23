@@ -226,6 +226,7 @@
   // E.g. a liability cap written into the insurance clause. The stronger suggestion wins.
   // Prototype: key phrases ("trigger"). At OMV: a local model reads the text and picks the rule.
   const RANK = { accept: 0, review: 1, reject: 2, escalate: 3 };
+  const EXCEPTION = /\b(unless|except|save for|provided that|subject to|other than|außer|ausgenommen|sofern|soweit|es sei denn|vorbehaltlich)\b/i;
   function matchByMeaning(f) {
     const added = f.b ? sentenceDiff(f.b.paras, f.c.paras).supplier : allSentences(f.c.paras);
     for (const r of RULES) {
@@ -248,7 +249,7 @@
       const f = { b, c, head, rule, to: null, cosmetic: false };
       if (!c) { f.a = "review"; f.why = "The supplier deleted this whole clause. No rule covers a deletion, so you decide whether OMV can live without it."; }
       else if (!b) { f.a = "review"; f.why = "The supplier added a clause that is not in OMV's standard. No rule covers it, so you decide."; }
-      else if (norm(b.body) === norm(c.body)) { f.a = "accept"; f.cosmetic = true; f.why = "Only punctuation, capitals or spacing changed. No change in meaning, so ContractGuard accepted it."; }
+      else if (norm(b.body) === norm(c.body)) { f.a = "accept"; f.cosmetic = true; f.why = "Only punctuation, capitals or spacing changed. No change in meaning, so the suggestion is Accept. Please confirm."; }
       else if (!rule) { f.a = "review"; f.why = "This clause changed, but no approved rule covers it. ContractGuard doesn't guess, so you decide."; }
       else {
         const r = rule.test(c.body, b.body);
@@ -271,6 +272,12 @@
       if (b && c) f.changes = wordChanges(b.body, c.body);
       if (b && c && /definition/i.test(head)) f.why += definitionNote(b, c, base);
       if (c && !f.cosmetic) matchByMeaning(f);
+      // Never suggest accepting new text that contains an exception ("unless", "except", "außer"...).
+      if (f.a === "accept" && c && !f.cosmetic) {
+        const added = b ? sentenceDiff(b.paras, c.paras).supplier : allSentences(c.paras);
+        const ex = added.join(" ").match(EXCEPTION);
+        if (ex) { f.a = "review"; f.why += ` But the new text contains an exception (“${ex[0]}”), so it isn’t suggested for acceptance. You decide.`; }
+      }
       findings.push(f);
     }
     // Clause order, as in the document. A deleted clause sits where it was in OMV's standard.
@@ -304,7 +311,7 @@
   // so the layout uses symbols, short quotes and blank lines instead of bold or italic.
   function commentText(f) {
     const q = (t) => `“${cut(t)}”`;
-    const head = f.cosmetic ? "✔ Accepted (wording only)" : f.a === "review" ? "? No rule: you decide" : `${ICON[f.a]} Suggest: ${suggestion(f)}`;
+    const head = f.cosmetic ? "✔ Suggest: Accept (wording only)" : f.a === "review" ? "? No rule: you decide" : `${ICON[f.a]} Suggest: ${suggestion(f)}`;
     const L = [`${TAG} ${head}`, "", f.why];
     if (!f.cosmetic) {
       let omv, sup;
