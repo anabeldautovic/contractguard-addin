@@ -731,7 +731,6 @@
     if (n) h += `<div class="progress">${nd} of ${n} decided</div><div class="bar"><i style="width:${Math.round((100 * nd) / n)}%"></i></div>`;
     const attention = R.findings.filter((f) => f.word && f.word !== "ok" && f.word !== "closed").length;
     if (attention) h += `<div class="wordnote">⚠ ${attention} change${attention === 1 ? " was" : "s were"} changed directly in Word: see the notes below.</div>`;
-    if (n) h += `<div class="sumacts"><a class="mini" href="${mailto("", `ContractGuard review: ${docName()}`, summaryText())}" target="_blank" rel="noopener">✉ Email summary</a><button class="undo copysum">Copy summary</button></div>`;
     h += `</div>`;
 
     R.findings.forEach((f, i) => {
