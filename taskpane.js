@@ -265,11 +265,12 @@
     if (!box) { box = document.createElement("div"); box.id = "confirm"; box.className = "form"; box.hidden = true; $("run").after(box); }
     return box;
   }
-  function ask(msg, yesLabel, onYes) {
+  function ask(msg, yesLabel, onYes, extra) {
     const box = confirmBox();
-    box.innerHTML = `<div class="ft">${msg}</div><div class="fbtns"><button class="act danger yes">${yesLabel}</button><button class="undo no">Cancel</button></div>`;
+    box.innerHTML = `<div class="ft">${msg}</div><div class="fbtns"><button class="act danger yes">${yesLabel}</button>${extra ? `<button class="act danger extra">${extra.label}</button>` : ""}<button class="undo no">Cancel</button></div>`;
     box.hidden = false;
     box.querySelector(".yes").onclick = () => { box.hidden = true; onYes(); };
+    if (extra) box.querySelector(".extra").onclick = () => { box.hidden = true; extra.fn(); };
     box.querySelector(".no").onclick = () => { box.hidden = true; };
     box.scrollIntoView({ block: "nearest", behavior: "smooth" });
     box.querySelector(".no").focus();
@@ -298,16 +299,34 @@
         const cs = ctx.document.body.getComments(); cs.load("items/content"); await ctx.sync();
         n = cs.items.filter((c) => CG.isOurs(c.content)).length;
       });
-      if (!n) { status("No ContractGuard comments in this document."); return; }
-      ask(`Remove all ${n} ContractGuard comment${n === 1 ? "" : "s"} from this document? Only ContractGuard’s comments are removed, with the decision replies inside them. Your own comments and everyone else’s stay. The Log stays too.`, "Remove", () => guarded(clearComments));
+      // Tracked changes left from Reject: undo them too, if the lawyer wants a clean document.
+      let tracked = 0;
+      if (Office.context.requirements.isSetSupported("WordApi", "1.6")) {
+        try { await Word.run(async (ctx) => { const tc = ctx.document.body.getTrackedChanges(); tc.load("items"); await ctx.sync(); tracked = tc.items.length; }); } catch (e) { console.warn(e); }
+      }
+      const mine = review ? decisions.filter((d) => d && d.k === "reject").length : 0;
+      if (!n && !tracked) { status("No ContractGuard comments in this document."); return; }
+      const msg = `Remove ${n} ContractGuard comment${n === 1 ? "" : "s"}? Your own comments stay.` +
+        (mine ? ` You can also undo your ${mine} Reject${mine === 1 ? "" : "s"}, so the supplier’s text comes back.`
+          : tracked ? ` The document also has ${tracked} tracked change${tracked === 1 ? "" : "s"}; undoing them also undoes any the supplier made.` : "");
+      const extra = mine ? { label: "Remove + undo Rejects", fn: () => guarded(() => clearComments("mine")) }
+        : tracked ? { label: "Remove + undo all tracked changes", fn: () => guarded(() => clearComments("all")) } : null;
+      ask(msg, "Remove comments", () => guarded(() => clearComments("")), extra);
     });
   }
 
-  async function clearComments() {
+  async function clearComments(undo) {
+    if (undo === "mine") {
+      const rejected = review.findings.filter((f, i) => decisions[i] && decisions[i].k === "reject");
+      await Word.run(async (ctx) => { for (const f of rejected) await undoReject(ctx, f); });
+    }
+    if (undo === "all") {
+      await Word.run(async (ctx) => { ctx.document.body.getTrackedChanges().rejectAll(); await ctx.sync(); });
+    }
     await Word.run(async (ctx) => {
       const n = await deleteOurComments(ctx);
-      if (n) addEvent("Comments removed", `${n} ContractGuard comment${n === 1 ? "" : "s"}`);
-      status(n ? `Removed ${n} ContractGuard comment${n > 1 ? "s" : ""}. Yellow highlights stay; use Undo or remove them by hand.` : "No ContractGuard comments found.");
+      if (n || undo) addEvent("Comments removed", `${n} ContractGuard comment${n === 1 ? "" : "s"}${undo ? ", tracked changes undone" : ""}`);
+      status(`Removed ${n} ContractGuard comment${n === 1 ? "" : "s"}${undo ? " and undid the tracked changes" : ""}. Yellow highlights stay.`);
       $("result").innerHTML = "";
       review = null; decisions = []; pending = null; proposing = null;
       renderRules();
