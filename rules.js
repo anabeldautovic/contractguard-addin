@@ -331,7 +331,7 @@
     if (f.b && f.c && f.b.num !== f.c.num) L.push("", `Note: OMV clause ${f.b.num} is clause ${f.c.num} here.`);
     const kind = (r) => (r.kind === "hard" ? "hard check" : "playbook");
     if (f.rule && !f.cosmetic && f.a !== "review") L.push("", `Rule ${f.rule.id} (${kind(f.rule)}) · ${f.rule.source}`);
-    if (f.matched) L.push(`Matched by meaning to rule ${f.matched.id} (${kind(f.matched)}). Prototype: key phrases; at OMV a local model.`);
+    if (f.matched) L.push(`Matched to rule ${f.matched.id}.`);
     return L.join("\n");
   }
 

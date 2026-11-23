@@ -152,9 +152,9 @@
     saveLog(); renderLog();
   }
   function renderLog() {
-    if (!log.length) { $("log").innerHTML = `<p class="muted">No decisions yet. Every Accept, Reject, Escalate, Go back and rule proposal is recorded here and saved inside this document.</p>`; return; }
+    if (!log.length) { $("log").innerHTML = `<p class="muted">No decisions yet.</p>`; return; }
     const time = (t) => { const d = new Date(t); return d.toLocaleDateString() + " " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); };
-    let h = `<p class="muted">Saved inside this document. Your name is on each reply in the Word comments.</p><table class="logt"><tr><th>When</th><th>Clause</th><th>Suggested</th><th>Decision</th></tr>`;
+    let h = `<table class="logt"><tr><th>When</th><th>Clause</th><th>Suggested</th><th>Decision</th></tr>`;
     [...log].reverse().forEach((e) => {
       const over = e.suggested !== "(no rule)" && ACT_LABEL[e.decision.toLowerCase()] && e.decision !== e.suggested;
       h += `<tr><td>${esc(time(e.t))}</td><td>${esc(e.clause)}</td><td>${esc(e.suggested)}</td><td>${over ? "<b>" : ""}${esc(e.decision)}${over ? "</b>" : ""}${e.note ? `<div class="note">${esc(e.note)}</div>` : ""}</td></tr>`;
@@ -167,7 +167,7 @@
 
   // ---------------- the rulebook tab ----------------
   function renderRules() {
-    let h = `<div class="rbhead"><b>Rulebook ${esc(CG.RULEBOOK_VERSION)}</b><br>Owner: ${esc(CG.RULEBOOK_OWNER.name)}. Two kinds of rules: <b>hard checks</b> (coded, for critical numbers and facts) and <b>playbook</b> entries (plain sentences the lawyers write and edit). Lawyers propose changes; the legal team approves before they’re used. Matching new wording to a rule uses key phrases here; at OMV a local model would do it.</div>`;
+    let h = `<div class="rbhead"><b>Rulebook</b></div>`;
     for (const r of CG.RULES) {
       const used = review ? review.findings.map((f, i) => ({ f, i })).filter((x) => x.f.rule === r || x.f.matched === r) : [];
       h += `<div class="rule${r.id === currentRule ? " cur" : ""}" data-id="${r.id}"><div class="rid">${esc(r.id)} <span>· ${esc(r.source.replace("OMV GPC Jan 2026, ", ""))}</span> <span class="kind ${r.kind}">${r.kind === "hard" ? "Hard check" : "Playbook"}</span></div>`;
@@ -176,7 +176,6 @@
       if (used.length) h += `<div class="used">In this contract: ` + used.map((x) => `<a href="#" class="tochange" data-i="${x.i}">${esc((x.f.c || x.f.b).num)}. ${esc(x.f.head)} → ${esc(CG.suggestion(x.f))}</a>`).join(", ") + `</div>`;
       h += `</div>`;
     }
-    h += `<div class="rule"><div class="rid">Every other change</div><ul><li>No rule covers it → You decide. ContractGuard never guesses.</li><li>A rule's point is unchanged but other wording changed → You decide.</li><li>Only punctuation, capitals or spacing changed → Accepted automatically.</li></ul></div>`;
     const body = `Proposal for a new ContractGuard rule\n\nClause:\nWhen the supplier changes:\nContractGuard should suggest (Accept / Reject / Escalate to whom):\nBecause:\n\nProposed by:`;
     h += `<a class="mini" href="${mailto(CG.RULEBOOK_OWNER.email, "ContractGuard: new rule proposal", body)}" target="_blank" rel="noopener">✎ Propose a new rule</a>`;
     $("rules").innerHTML = h;
@@ -309,7 +308,7 @@
       const n = await deleteOurComments(ctx);
       if (n) addEvent("Comments removed", `${n} ContractGuard comment${n === 1 ? "" : "s"}`);
       status(n ? `Removed ${n} ContractGuard comment${n > 1 ? "s" : ""}. Yellow highlights stay; use Undo or remove them by hand.` : "No ContractGuard comments found.");
-      $("result").innerHTML = `<p class="muted">Press Run review to see the supplier's changes here.</p>`;
+      $("result").innerHTML = "";
       review = null; decisions = []; pending = null; proposing = null;
       renderRules();
     });
@@ -746,7 +745,7 @@
         h += `</div>`;
         if (proposing === i) {
           const should = ACT_LABEL[d.k] + (d.k === "escalate" ? " to " : "");
-          h += `<div class="form" data-i="${i}"><div class="ft">Propose a rule to ${esc(CG.RULEBOOK_OWNER.name)}. It only goes live after Legal approves it.</div>
+          h += `<div class="form" data-i="${i}"><div class="ft">Propose a rule</div>
             <label>When the supplier…<textarea class="p-when" rows="3">${esc(changeSummary(f))}</textarea></label>
             <label>ContractGuard should suggest<input class="p-should" value="${esc(should)}"></label>
             <label>Because<textarea class="p-because" rows="2" placeholder="Why this is OMV's position">${esc(d.note || "")}</textarea></label>

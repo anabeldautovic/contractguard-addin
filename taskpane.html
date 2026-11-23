@@ -8,7 +8,6 @@
 </head>
 <body>
   <h1>ContractGuard</h1>
-  <p class="sub">Compares the supplier’s version with OMV’s General Conditions of Purchase, suggests what to do with each change, and adds a comment to it. You decide every change.</p>
 
   <button class="btn" id="run" disabled>Run review</button>
   <div id="confirm" class="form" hidden></div>
@@ -16,16 +15,13 @@
   <div class="tabs">
     <button class="tab on" data-tab="changes">Changes</button><button class="tab" data-tab="rules">Rulebook</button><button class="tab" data-tab="log">Log</button>
   </div>
-  <div id="result"><p class="muted">Press Run review to see the supplier's changes here.</p></div>
+  <div id="result"></div>
   <div id="rules" hidden></div>
   <div id="log" hidden></div>
 
   <button class="linkbtn" id="clear" disabled>Remove ContractGuard’s comments (yours stay)…</button>
 
-  <div class="foot">
-    Practice version. Templates: OMV General Conditions of Purchase (Austrian law, January 2026 and November 2025), the public versions from omv.com. Rulebook: 9 draft rules, not approved by OMV Legal. E-mail addresses are placeholders. No AI model. The contract never leaves your computer.<br><br>
-    Panel version 22.<br><br>Test files: <a href="samples/supplier-example1.docx" target="_blank" rel="noopener">task example (60 → 30 days)</a> · <a href="samples/supplier-tough-round.docx" target="_blank" rel="noopener">tough round (12 changes)</a> · <a href="samples/supplier-own-terms.docx" target="_blank" rel="noopener">supplier’s own terms</a> · <a href="samples/supplier-nov2025-based.docx" target="_blank" rel="noopener">based on Nov 2025</a> · <a href="samples/round1-omv-sent.docx" target="_blank" rel="noopener">round 1 (OMV sent)</a> · <a href="samples/round2-supplier.docx" target="_blank" rel="noopener">round 2 (supplier)</a> · <a href="samples/omv-template.docx" target="_blank" rel="noopener">OMV template</a>.
-  </div>
+  <div class="foot">Panel version 23</div>
 
 <script>
   // Always load the newest rules, code and styles, so Word never shows an old copy.
